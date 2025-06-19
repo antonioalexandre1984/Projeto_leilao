@@ -7,7 +7,7 @@ from datetime import datetime # Importa o módulo datetime para gerar timestamps
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
-from selenium.common.exceptions import NoSuchElementException, WebDriverException
+from selenium.common.exceptions import NoSuchElementException, WebDriverException, TimeoutException
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
@@ -199,9 +199,66 @@ try:
     else:
         print("\n[WARN] Nenhum lote foi encontrado na página. O arquivo CSV não será gerado.")
     
-    print("[INFO] Navegador fechado.")
-    print("[INFO] Scraping concluído.")
+    # --- INÍCIO DA VERIFICAÇÃO DE BOTÕES DE PAGINAÇÃO NO RODAPÉ ---
+    print("\n--- INÍCIO DA VERIFICAÇÃO DE BOTÕES DE PAGINAÇÃO NO RODAPÉ ---")
+
+    # Adicionar uma pequena pausa extra aqui para garantir que os elementos numéricos carreguem
+    time.sleep(2) 
+
+    # 1. Tentar encontrar o elemento que mostra "Página X de Y"
+    try:
+        total_pages_element = WebDriverWait(driver, 15).until( # Aumentei o tempo de espera
+            EC.presence_of_element_located((By.XPATH, "//p[contains(@class, 'text-grey-7') and contains(., 'Página')]/span[2]"))
+        )
+        print(f"✅ SUCESSO: Elemento 'Total de Páginas' encontrado no rodapé. Texto: {total_pages_element.text.strip()}")
+    except TimeoutException:
+        print("❌ ERRO: Elemento 'Total de Páginas' (//p[contains(@class, 'text-grey-7') and contains(., 'Página')]/span[2]) NÃO encontrado no rodapé (Timeout).")
+    except NoSuchElementException:
+        print("❌ ERRO: Elemento 'Total de Páginas' (//p[contains(@class, 'text-grey-7') and contains(., 'Página')]/span[2]) NÃO encontrado no rodapé (NoSuchElement).")
+    except Exception as e:
+        print(f"❌ ERRO Inesperado ao buscar 'Total de Páginas' no rodapé: {e}")
+
+    # 2. Tentar encontrar o botão "Próxima Página" (seta dupla para a direita, ir para a última)
+    try:
+        next_page_button = WebDriverWait(driver, 15).until( # Aumentei o tempo de espera
+            EC.element_to_be_clickable((
+                By.XPATH,
+                "//div[contains(@class, 'pagination-listaveiculos')]//button[.//i[contains(text(), 'keyboard_double_arrow_right')]]"
+            ))
+        )
+        print(f"✅ SUCESSO: Botão 'Próxima Página' (seta dupla direita) encontrado no rodapé. Atributo aria-label: {next_page_button.get_attribute('aria-label')}. Habilitado: {'disabled' not in next_page_button.get_attribute('class')}")
+    except TimeoutException:
+        print("❌ ERRO: Botão 'Próxima Página' (seta dupla direita) NÃO encontrado no rodapé (Timeout).")
+    except NoSuchElementException:
+        print("❌ ERRO: Botão 'Próxima Página' (seta dupla direita) NÃO encontrado no rodapé (NoSuchElement).")
+    except Exception as e:
+        print(f"❌ ERRO Inesperado ao buscar botão 'Próxima Página' no rodapé: {e}")
+
+    # 3. Tentar encontrar os botões numéricos de paginação (ex: 1, 2, 3...)
+    try:
+        # Novo seletor XPath mais direto para os botões numéricos
+        # Tenta encontrar qualquer botão dentro do q-pagination__middle que contenha um span com a classe 'block'
+        page_number_buttons = WebDriverWait(driver, 15).until( # Aumentei o tempo de espera
+            EC.presence_of_all_elements_located((By.XPATH, "//div[contains(@class, 'q-pagination__middle')]/button[.//span[@class='block']]"))
+            # Alternativa se o acima falhar: By.CSS_SELECTOR, "div.q-pagination__middle button.q-btn--round span.block"
+        )
+        if page_number_buttons:
+            print(f"✅ SUCESSO: {len(page_number_buttons)} Botões de Página Numéricos encontrados no rodapé.")
+            for btn in page_number_buttons:
+                print(f"   - Botão numérico encontrado: {btn.text.strip()} (aria-label: {btn.get_attribute('aria-label')})")
+        else:
+            print("❌ ERRO: Nenhum Botão de Página Numérico encontrado no rodapé (Lista Vazia).")
+    except TimeoutException:
+        print("❌ ERRO: Botões de Página Numéricos NÃO encontrados no rodapé (Timeout).")
+    except NoSuchElementException:
+        print("❌ ERRO: Botões de Página Numéricos NÃO encontrados no rodapé (NoSuchElement).")
+    except Exception as e:
+        print(f"❌ ERRO Inesperado ao buscar botões numéricos no rodapé: {e}")
+
+    print("\n--- FIM DA VERIFICAÇÃO DE BOTÕES DE PAGINAÇÃO NO RODAPÉ ---")
 
 finally:
     if driver: # Garante que o driver seja fechado mesmo se ocorrer um erro
         driver.quit()
+    print("[INFO] Navegador fechado.")
+    print("[INFO] Scraping e verificação de paginação concluídos.")
