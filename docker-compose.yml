@@ -1,0 +1,53 @@
+services:
+  selenium:
+    image: selenium/standalone-chrome:118.0
+    ports:
+      - "7900:7900"
+      - "4444:4444"
+    healthcheck:
+      # Alterado 'selenium' para 'localhost' para a verificação de saúde dentro do contêiner.
+      # Isso garante que o Selenium está respondendo localmente antes que outros contêineres tentem se conectar.
+      test: ["CMD", "curl", "-f", "http://localhost:4444/wd/hub/status"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    shm_size: '2g'
+    restart: always
+    # Adicionado à rede personalizada para que os scrapers possam se conectar
+    networks:
+      - scraper_network
+
+
+  parquedosleiloes:
+    # Constrói a imagem a partir do Dockerfile na pasta ./parque
+    build: ./parque
+    depends_on:
+      selenium:
+        condition: service_healthy
+    # Mapeia a pasta 'parque' local para '/app' dentro do contêiner
+    volumes:
+      - ./parque:/app
+    # Sobrescreve o CMD do Dockerfile para garantir que o script correto seja executado
+    command: python3 parquedosleiloes.py
+    networks:
+      - scraper_network
+
+
+  leilo:
+    # Constrói a imagem a partir do Dockerfile na pasta ./leilo
+    build: ./leilo
+    depends_on:
+      selenium:
+        condition: service_healthy
+    # Mapeia a pasta 'leilo' local para '/app' dentro do contêiner
+    volumes:
+      - ./leilo:/app
+    # Sobrescreve o CMD do Dockerfile para garantir que o script correto seja executado
+    command: python3 scraper.py
+    networks:
+      - scraper_network
+
+  
+networks:
+  scraper_network:
+    driver: bridge
