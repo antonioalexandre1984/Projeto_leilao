@@ -4,12 +4,12 @@ import re
 from datetime import datetime, timedelta
 
 # Define o caminho do diretório onde o scraper gera os arquivos CSV.
-CSV_DIRECTORY = r"C:\Users\anton\Desktop\parque_leiloes_scraper\app\parque\etl"
+CSV_DIRECTORY = r"C:\Users\anton\Desktop\parque_leiloes_scraper\app\teste"
 
 def find_latest_csv(directory):
     latest_csv = None
     latest_timestamp = None
-    csv_pattern = re.compile(r"leilao_parque_data_(\d{8}_\d{6})\.csv")
+    csv_pattern = re.compile(r"leilo_com_br_carros_(\d{8}_\d{6})\.csv")
 
     if not os.path.exists(directory):
         print(f"[ERRO] O diretório '{directory}' para os arquivos CSV não foi encontrado.")
@@ -183,7 +183,7 @@ def process_and_display_data():
         timestamp_excel = datetime.now().strftime("%Y%m%d_%H%M%S")
         excel_file_name = f"dados_leilao_processado_{timestamp_excel}.xlsx"
 
-        OUTPUT_DIR = r"C:\Users\anton\Desktop\parque_leiloes_scraper\app\parque\etl_tratado"
+        OUTPUT_DIR = r"C:\Users\anton\Desktop\parque_leiloes_scraper\app\teste\etl_tratado"
         os.makedirs(OUTPUT_DIR, exist_ok=True)
         excel_file_path = os.path.join(OUTPUT_DIR, excel_file_name)
 

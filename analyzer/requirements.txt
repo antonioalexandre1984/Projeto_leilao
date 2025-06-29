@@ -1,0 +1,6 @@
+streamlit
+pandas
+psycopg2-binary # Usar a versão binary para evitar problemas de compilação
+scikit-learn
+google-generativeai # Garante uma versão mais recente que suporta 'api_version'
+python-dotenv

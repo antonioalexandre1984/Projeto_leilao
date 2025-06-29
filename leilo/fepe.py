@@ -14,37 +14,18 @@ EXCEL_OUTPUT_DIR = r"C:\Users\anton\Desktop\parque_leiloes_scraper\app\leilo"
 FIPE_API_BASE_URL = "https://parallelum.com.br/fipe/api/v1"
 
 class FipeApiClient:
-    def __init__(self, base_url, max_retries=5, initial_delay=0.5):
+    def __init__(self, base_url):
         self.base_url = base_url
-        self.max_retries = max_retries
-        self.initial_delay = initial_delay
 
     def _make_request(self, endpoint):
-        for attempt in range(self.max_retries):
-            try:
-                response = requests.get(f"{self.base_url}{endpoint}", timeout=20)
-                response.raise_for_status()
-                return response.json()
-            except requests.exceptions.HTTPError as e:
-                if e.response.status_code == 429:
-                    delay = self.initial_delay * (2 ** attempt)
-                    print(f"[WARN API FIPE] Tentativa {attempt + 1}/{self.max_retries}: Too Many Requests (429). Aguardando {delay:.2f} segundos antes de re-tentar...")
-                    time.sleep(delay)
-                else:
-                    print(f"[ERRO API FIPE] Erro HTTP {e.response.status_code} ao obter dados de {endpoint}: {e}")
-                    return None
-            except requests.exceptions.RequestException as e:
-                print(f"[ERRO API FIPE] Não foi possível conectar ou obter dados de {endpoint}: {e}. Tentativa {attempt + 1}/{self.max_retries}.")
-                if attempt < self.max_retries - 1:
-                    delay = self.initial_delay * (2 ** attempt)
-                    print(f"[INFO] Aguardando {delay:.2f} segundos antes de re-tentar...")
-                    time.sleep(delay)
-                else:
-                    print(f"[ERRO API FIPE] Todas as {self.max_retries} tentativas falharam para {endpoint}.")
-                    return None
-        return None
+        try:
+            response = requests.get(f"{self.base_url}{endpoint}")
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            print(f"[ERRO API FIPE] Não foi possível conectar ou obter dados de {endpoint}: {e}")
+            return None
 
-    # Métodos que estavam faltando ou incompletos:
     def get_brands(self, vehicle_type):
         return self._make_request(f"/{vehicle_type}/marcas")
 
@@ -60,26 +41,14 @@ class FipeApiClient:
             return data['Valor']
         return None
 
-
 def determine_vehicle_type(brand_name, model_name):
-    """
-    Determina o tipo de veículo (carros, motos, caminhoes) com base na marca e modelo.
-    Mais robusto, verifica palavras-chave comuns.
-    """
     brand_name_lower = brand_name.lower() if brand_name else ''
     model_name_lower = model_name.lower() if model_name else ''
 
-    # Marcas/Palavras-chave comuns para motos
-    moto_keywords = ["moto", "honda", "yamaha", "suzuki", "kawasaki", "bmw gs", "triumph", "harley"]
-    if any(keyword in brand_name_lower or keyword in model_name_lower for keyword in moto_keywords):
+    if "moto" in model_name_lower or "honda" in brand_name_lower or "yamaha" in brand_name_lower:
         return "motos"
-    
-    # Marcas/Palavras-chave comuns para caminhões
-    caminhao_keywords = ["caminhao", "mercedes benz caminhao", "volkswagen caminhao", "iveco", "scania", "volvo caminhao", "ford cargo", "agrle"]
-    if any(keyword in brand_name_lower or keyword in model_name_lower for keyword in caminhao_keywords):
+    elif "caminhao" in model_name_lower or "volkswagen caminhao" in brand_name_lower or "iveco" in brand_name_lower:
         return "caminhoes"
-    
-    # Padrão, se não for moto nem caminhão, assume carro
     return "carros"
 
 
@@ -136,40 +105,20 @@ def process_and_display_data():
         print(f"[INFO] Dados carregados com sucesso do '{EXCEL_FILE_PATH}'.")
         print(f"[INFO] Total de {len(df)} registros encontrados.")
 
-        # --- Desmembrar a coluna 'Título' e criar 'Fabricante_Veiculo' e 'Modelo_Veiculo' ---
         if 'Título' in df.columns:
             split_title = df['Título'].str.split('/', n=1, expand=True).fillna('')
-            # Criando 'Fabricante_Veiculo' diretamente
-            df['Fabricante_Veiculo'] = split_title[0].str.strip() 
-            
+            df['Marca'] = split_title[0].str.strip()
             if len(split_title.columns) > 1:
-                # Criando 'Modelo_Veiculo' com a primeira palavra do que sobrou do título
-                df['Modelo_Veiculo'] = split_title[1].str.split(' ', n=1, expand=True)[0].str.strip()
+                # O modelo raspado já vem limpo para a primeira palavra
+                df['Modelo'] = split_title[1].str.split(' ', n=1, expand=True)[0].str.strip() 
             else:
-                df['Modelo_Veiculo'] = ''
-            
-            print("[INFO] Coluna 'Título' desmembrada em 'Fabricante_Veiculo' e 'Modelo_Veiculo'.")
+                df['Modelo'] = ''
+            print("[INFO] Coluna 'Título' desmembrada em 'Marca' e 'Modelo' (modelo extraído até o primeiro espaço).")
         else:
             print("[WARN] Coluna 'Título' não encontrada no Excel. Não foi possível desmembrar.")
-            df['Fabricante_Veiculo'] = '' # Garante que as colunas existam mesmo que vazias
-            df['Modelo_Veiculo'] = ''
+            df['Marca'] = ''
+            df['Modelo'] = ''
 
-
-        # --- AJUSTE NA COLUNA 'Fabricante_Veiculo' (se necessário) ---
-        if 'Fabricante_Veiculo' in df.columns:
-            df['Fabricante_Veiculo'] = df['Fabricante_Veiculo'].replace({
-                'VOLKSWAGEN': 'VW - VolksWagen',
-                'CHEVROLET': 'GM - Chevrolet',
-                'MERCEDES-BENZ': 'Mercedes-Benz', # Adicionado para padronização se aparecer assim
-                'SCANIA': 'Scania',
-                'VOLVO': 'Volvo'
-            })
-            print("[INFO] Coluna 'Fabricante_Veiculo' padronizada para algumas marcas comuns.")
-        else:
-            print("[WARN] Coluna 'Fabricante_Veiculo' não encontrada para padronização.")
-
-
-        # --- Duplicar e formatar a coluna 'Data Leilão' para 'data leilão' ---
         if 'Data Leilão' in df.columns:
             df['data leilão'] = df['Data Leilão'].astype(str).str.strip()
             print("[INFO] Coluna 'Data Leilão' usada para 'data leilão'.")
@@ -177,24 +126,11 @@ def process_and_display_data():
             df['data leilão'] = df['Situação'].astype(str)
             df['data leilão'] = df['data leilão'].str.replace("Leilão ao vivo em: ", "", regex=False).str.strip()
             try:
-                def format_date_from_situacao(text):
-                    if pd.isna(text) or not text.strip():
-                        return ''
-                    
-                    date_match = re.search(r'(\d{2}/\d{2}/\d{4})', text)
-                    if date_match:
-                        return date_match.group(1)
-                    
-                    time_match = re.search(r'(\d{2}h\d{2}m\d{2}s)', text)
-                    if time_match:
-                        # Se for só hora, assume a data atual para o leilão
-                        current_date = datetime.now().strftime("%d/%m/%Y")
-                        return current_date
-                    
-                    return ''
-                
-                df['data leilão'] = df['data leilão'].apply(format_date_from_situacao)
-                print("[INFO] Coluna 'Situação' usada como fallback e formatada para 'data leilão' (dd/mm/aaaa).")
+                df['data leilão'] = df['data leilão'].apply(lambda x: pd.to_datetime(
+                    f"{datetime.now().strftime('%Y-%m-%d')} {x.replace('h', ':').replace('m', ':').replace('s', '')}",
+                    format="%Y-%m-%d %H:%M:%S"
+                ).strftime("%d/%m/%Y") if pd.notna(x) and x.strip() else '')
+                print("[INFO] Coluna 'Situação' duplicada e formatada para 'data leilão' (dd/mm/aaaa) como fallback.")
             except Exception as e:
                 print(f"[ERRO] Ocorreu um erro ao formatar a coluna 'data leilão' do fallback: {e}.")
         else:
@@ -203,7 +139,6 @@ def process_and_display_data():
 
         fipe_client = FipeApiClient(FIPE_API_BASE_URL)
         
-        # Novas colunas para os resultados da FIPE
         df['FIPE_Marca_Correspondente'] = None
         df['FIPE_Modelo_Correspondente'] = None
         df['Diferenca_Valor (%)'] = None
@@ -211,17 +146,15 @@ def process_and_display_data():
         df['valor_fipe'] = None
 
         for index, row in df.iterrows():
-            # Usando as novas colunas renomeadas
-            marca_scraped = row['Fabricante_Veiculo']
-            modelo_scraped_veiculo = row['Modelo_Veiculo'] 
+            marca_scraped = row['Marca']
+            modelo_scraped_original = row['Modelo'] # Modelo já "limpo" (primeira palavra)
             ano_scraped = str(row['Ano'])
 
-            print(f"\nConsulta FIPE para: Fabricante_Veiculo='{marca_scraped}', Modelo_Veiculo='{modelo_scraped_veiculo}', Ano='{ano_scraped}'")
+            print(f"\nConsulta FIPE para: Marca='{marca_scraped}', Modelo='{modelo_scraped_original}', Ano='{ano_scraped}'")
             
-            # A função `determine_vehicle_type` agora recebe `Fabricante_Veiculo` e `Modelo_Veiculo`
-            vehicle_type = determine_vehicle_type(marca_scraped, modelo_scraped_veiculo)
+            vehicle_type = determine_vehicle_type(marca_scraped, modelo_scraped_original)
             if not vehicle_type:
-                print(f"[WARN] Tipo de veículo não determinado para Fabricante_Veiculo: '{marca_scraped}', Modelo_Veiculo: '{modelo_scraped_veiculo}'. Pulando FIPE.")
+                print(f"[WARN] Tipo de veículo não determinado para Marca: '{marca_scraped}', Modelo: '{modelo_scraped_original}'. Pulando FIPE.")
                 df.at[index, 'Status_FIPE'] = "Tipo não determinado"
                 continue
 
@@ -233,7 +166,6 @@ def process_and_display_data():
             brands_data = fipe_client.get_brands(vehicle_type)
             if brands_data:
                 normalized_scraped_brand = clean_and_normalize_name(marca_scraped)
-                # Buscando a marca correspondente na FIPE
                 matched_brand = next((b for b in brands_data if normalized_scraped_brand == clean_and_normalize_name(b['nome'])), None)
                 
                 if matched_brand:
@@ -242,18 +174,33 @@ def process_and_display_data():
                     
                     models_data = fipe_client.get_models(vehicle_type, brand_id)
                     if models_data and 'modelos' in models_data:
-                        normalized_scraped_model_veiculo = clean_and_normalize_name(modelo_scraped_veiculo)
+                        normalized_scraped_model = clean_and_normalize_name(modelo_scraped_original)
                         matched_model = None
 
-                        # TENTATIVA 1: Procurar pelo Modelo_Veiculo exato ou como substring
+                        # --- TENTATIVA 1: Procurar pelo modelo completo já extraído ---
                         for m in models_data['modelos']:
                             normalized_fipe_model = clean_and_normalize_name(m['nome'])
-                            if normalized_scraped_model_veiculo == normalized_fipe_model or \
-                               (normalized_scraped_model_veiculo in normalized_fipe_model and len(normalized_scraped_model_veiculo) > 2): # Ajuste o > 2 para uma correspondência mais precisa
+                            if normalized_scraped_model == normalized_fipe_model or \
+                               (normalized_scraped_model in normalized_fipe_model and len(normalized_scraped_model) > 3):
                                 matched_model = m
-                                print(f"    - [INFO] Modelo_Veiculo '{modelo_scraped_veiculo}' encontrado como '{m['nome']}' na FIPE.")
                                 break
                         
+                        # --- TENTATIVA 2: Se não encontrar, tentar com a primeira palavra do modelo ---
+                        if not matched_model and ' ' in modelo_scraped_original: # Verifica se há mais de uma palavra originalmente
+                            first_word_of_model = modelo_scraped_original.split(' ')[0].strip()
+                            normalized_first_word_model = clean_and_normalize_name(first_word_of_model)
+                            
+                            # Evita tentar novamente se o modelo original já era uma única palavra
+                            if normalized_first_word_model != normalized_scraped_model: 
+                                print(f"    - [INFO] Modelo completo não encontrado. Tentando buscar modelo usando apenas a primeira palavra: '{first_word_of_model}'")
+                                for m in models_data['modelos']:
+                                    normalized_fipe_model = clean_and_normalize_name(m['nome'])
+                                    if normalized_first_word_model == normalized_fipe_model or \
+                                       (normalized_first_word_model in normalized_fipe_model and len(normalized_first_word_model) > 3):
+                                        matched_model = m
+                                        fipe_status = "Sucesso (Modelo parcial)"
+                                        break
+
                         if matched_model:
                             fipe_model_name = matched_model['nome']
                             model_id = matched_model['codigo']
@@ -267,36 +214,35 @@ def process_and_display_data():
                                         matched_year_code = y['codigo']
                                         break
 
-                                # Se o ano específico não for encontrado, tenta buscar pelo "Ano Zero KM" (código 32000-1) se disponível.
                                 if not matched_year_code and "32000-1" in [y['codigo'] for y in years_data]:
                                     matched_year_code = "32000-1"
-                                    print(f"    - [INFO] Ano '{ano_scraped}' não encontrado na FIPE. Usando 'Ano Zero KM' (32000-1).")
                                 
                                 if matched_year_code:
                                     fipe_value_raw = fipe_client.get_vehicle_value(vehicle_type, brand_id, model_id, matched_year_code)
                                     if fipe_value_raw:
                                         fipe_value_numeric = float(fipe_value_raw.replace("R$", "").replace(".", "").replace(",", ".").strip())
                                         fipe_price = fipe_value_numeric
-                                        fipe_status = "Sucesso"
+                                        if fipe_status != "Sucesso (Modelo parcial)":
+                                            fipe_status = "Sucesso"
                                         print(f"    - Valor FIPE encontrado: {fipe_value_raw}")
                                     else:
                                         fipe_status = "Valor FIPE não encontrado"
-                                        print(f"    - [WARN] Valor FIPE não encontrado para Ano: {ano_scraped}, Fabricante: {fipe_brand_name}, Modelo: {fipe_model_name}")
+                                        print(f"    - [WARN] Valor FIPE não encontrado para Ano: {ano_scraped}, Marca: {fipe_brand_name}, Modelo: {fipe_model_name}")
                                 else:
                                     fipe_status = "Ano FIPE não encontrado"
-                                    print(f"    - [WARN] Ano FIPE '{ano_scraped}' não encontrado para Fabricante: {fipe_brand_name}, Modelo: {fipe_model_name}")
+                                    print(f"    - [WARN] Ano FIPE '{ano_scraped}' não encontrado para Marca: {fipe_brand_name}, Modelo: {fipe_model_name}")
                             else:
                                 fipe_status = "Anos FIPE não encontrados"
-                                print(f"    - [WARN] Anos FIPE não encontrados para Fabricante: {fipe_brand_name}, Modelo: {fipe_model_name}")
+                                print(f"    - [WARN] Anos FIPE não encontrados para Marca: {fipe_brand_name}, Modelo: {fipe_model_name}")
                         else:
                             fipe_status = "Modelo FIPE não encontrado"
-                            print(f"    - [WARN] Modelo FIPE não encontrado para Fabricante_Veiculo: '{marca_scraped}', Modelo_Veiculo: '{modelo_scraped_veiculo}'")
+                            print(f"    - [WARN] Modelo FIPE não encontrado para Marca: '{marca_scraped}', Modelo: '{modelo_scraped_original}'")
                     else:
                         fipe_status = "Modelos FIPE não encontrados"
-                        print(f"    - [WARN] Modelos FIPE não encontrados para Fabricante_Veiculo: '{fipe_brand_name}'")
+                        print(f"    - [WARN] Modelos FIPE não encontrados para Marca: '{fipe_brand_name}'")
                 else:
-                    fipe_status = "Fabricante FIPE não encontrada"
-                    print(f"    - [WARN] Fabricante FIPE não encontrada para '{marca_scraped}'")
+                    fipe_status = "Marca FIPE não encontrada"
+                    print(f"    - [WARN] Marca FIPE não encontrada para '{marca_scraped}'")
             else:
                 fipe_status = "Marcas FIPE não encontradas"
                 print(f"    - [WARN] Marcas FIPE não encontradas para Tipo: {vehicle_type}")
@@ -319,7 +265,6 @@ def process_and_display_data():
                 print(f"    - [WARN] Não foi possível converter 'Valor do Lance' raspado '{row.get('Valor do Lance', 'N/A')}' para número.")
                 df.at[index, 'Diferenca_Valor (%)'] = "Erro de Valor Raspado"
 
-            # Pequena pausa para evitar sobrecarregar a API, mesmo com o backoff
             time.sleep(0.1)
 
         df['valor_fipe'] = df['valor_fipe'].apply(

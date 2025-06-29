@@ -1,3 +1,4 @@
+version: '3.8'
 services:
   selenium:
     image: selenium/standalone-chrome:118.0
@@ -5,49 +6,141 @@ services:
       - "7900:7900"
       - "4444:4444"
     healthcheck:
-      # Alterado 'selenium' para 'localhost' para a verificação de saúde dentro do contêiner.
-      # Isso garante que o Selenium está respondendo localmente antes que outros contêineres tentem se conectar.
       test: ["CMD", "curl", "-f", "http://localhost:4444/wd/hub/status"]
       interval: 5s
       timeout: 3s
       retries: 10
     shm_size: '2g'
     restart: always
-    # Adicionado à rede personalizada para que os scrapers possam se conectar
     networks:
       - scraper_network
 
+  db:
+    image: postgres:13 # Usaremos a versão 13 do PostgreSQL, que é estável.
+    environment:
+      POSTGRES_DB: base_leilao # Nome do banco de dados a ser criado
+      POSTGRES_USER: root # Nome do usuário do banco de dados
+      POSTGRES_PASSWORD: root # Senha do usuário do banco de dados
+    ports:
+      - "5445:5432" # Mapeia a porta 5432 do container (PostgreSQL padrão) para a porta 5445 do host
+    volumes:
+      - postgres_data:/var/lib/postgresql/data # Volume para persistir os dados do DB
+    healthcheck: # Healthcheck para o PostgreSQL (opcional, mas recomendado)
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - scraper_network
+    restart: always # Reinicia o container do DB automaticamente se ele cair
+
+  pgadmin: # Novo serviço para PgAdmin
+    image: dpage/pgadmin4
+    environment:
+      PGADMIN_DEFAULT_EMAIL: antonioalexandre1984@gmail.com # Altere para seu email de login
+      PGADMIN_DEFAULT_PASSWORD: super_secret_password # Altere para uma senha forte!
+    ports:
+      - "8080:80" # Mapeia a porta 80 do container para a porta 8080 do seu host
+    depends_on:
+      db:
+        condition: service_healthy # Garante que o DB esteja saudável antes de iniciar o PgAdmin
+    networks:
+      - scraper_network
+    restart: always
 
   parquedosleiloes:
-    # Constrói a imagem a partir do Dockerfile na pasta ./parque
     build: ./parque
     depends_on:
       selenium:
         condition: service_healthy
-    # Mapeia a pasta 'parque' local para '/app' dentro do contêiner
+      db: # Adiciona dependência no serviço de banco de dados
+        condition: service_healthy # Garante que o DB esteja saudável antes de iniciar o scraper
     volumes:
       - ./parque:/app
-    # Sobrescreve o CMD do Dockerfile para garantir que o script correto seja executado
+      - ./db_utils:/app/db_utils # Monta a pasta db_utils dentro do container
+    environment:
+      - TZ=America/Sao_Paulo
+      - PG_HOST=db # O nome do serviço do DB dentro da rede Docker
+      - PG_DATABASE=base_leilao
+      - PG_USER=root
+      - PG_PASSWORD=root
+      - PYTHONPATH=/app:/app/db_utils # Adiciona db_utils ao PYTHONPATH
     command: python3 parquedosleiloes.py
     networks:
       - scraper_network
 
-
   leilo:
-    # Constrói a imagem a partir do Dockerfile na pasta ./leilo
     build: ./leilo
     depends_on:
       selenium:
         condition: service_healthy
-    # Mapeia a pasta 'leilo' local para '/app' dentro do contêiner
+      db: # Adiciona dependência no serviço de banco de dados
+        condition: service_healthy # Garante que o DB esteja saudável antes de iniciar o scraper
     volumes:
       - ./leilo:/app
-    # Sobrescreve o CMD do Dockerfile para garantir que o script correto seja executado
+      - ./db_utils:/app/db_utils # Monta a pasta db_utils dentro do container
+    environment:
+      - TZ=America/Sao_Paulo
+      - PG_HOST=db # O nome do serviço do DB dentro da rede Docker
+      - PG_DATABASE=base_leilao
+      - PG_USER=root
+      - PG_PASSWORD=root
+      - PYTHONPATH=/app:/app/db_utils # Adiciona db_utils ao PYTHONPATH
+    
     command: python3 scraper.py
     networks:
       - scraper_network
-
   
+  test:
+    build: ./teste
+    depends_on:
+      selenium:
+        condition: service_healthy
+      db: # Adiciona dependência no serviço de banco de dados
+        condition: service_healthy # Garante que o DB esteja saudável antes de iniciar o scraper
+    volumes:
+      - ./teste:/app
+      - ./db_utils:/app/db_utils # Monta a pasta db_utils dentro do container
+    environment:
+      - TZ=America/Sao_Paulo
+      - PG_HOST=db # O nome do serviço do DB dentro da rede Docker
+      - PG_DATABASE=base_leilao
+      - PG_USER=root
+      - PG_PASSWORD=root
+      - PYTHONPATH=/app:/app/db_utils # Adiciona db_utils ao PYTHONPATH
+    command: python3 teste2.py
+    networks:
+      - scraper_network
+
+  analyzer: # Novo serviço para análise de dados com Gemini
+    build: ./analyzer # Onde o Dockerfile do analyzer está localizado
+    depends_on:
+      db:
+        condition: service_healthy # Garante que o DB esteja saudável antes de iniciar o analyzer
+    volumes:
+      - type: bind
+        source: ./analyzer
+        target: /app
+      - type: bind
+        source: ./db_utils
+        target: /app/db_utils
+    ports:
+      - "8501:8501" # Mapeia a porta do Streamlit para o seu host
+    environment:
+      - TZ=America/Sao_Paulo
+      - PG_HOST=db # O nome do serviço do DB dentro da rede Docker
+      - PG_DATABASE=base_leilao
+      - PG_USER=root
+      - PG_PASSWORD=root
+      - PYTHONPATH=/app:/app/db_utils # Adiciona db_utils ao PYTHONPATH
+    command: streamlit run dashboard.py --server.port=8501 --server.address=0.0.0.0
+    networks:
+      - scraper_network
+    restart: always # Reinicia o container do analyzer automaticamente se ele cair
+
 networks:
   scraper_network:
     driver: bridge
+
+volumes:
+  postgres_data: # Define o volume nomeado para persistência dos dados do PostgreSQL

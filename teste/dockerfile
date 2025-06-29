@@ -1,0 +1,24 @@
+# Usa a imagem base do Python
+FROM python:3.11-slim-buster
+
+# Define o diretório de trabalho dentro do contêiner
+WORKDIR /app
+
+# Instala as dependências necessárias para o Selenium e o Chromium
+RUN apt-get update && apt-get install -y \
+    chromium \
+    chromium-driver \
+    --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copia o arquivo requirements.txt (se você tiver um)
+COPY requirements.txt .
+
+# Instala as dependências Python
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copia apenas o script teste.py para o diretório de trabalho
+COPY teste.py .
+
+# Define o comando para executar o teste.py
+CMD ["python3", "teste.py"]

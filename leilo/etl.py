@@ -11,14 +11,14 @@ CSV_DIRECTORY = r"C:\Users\anton\Desktop\parque_leiloes_scraper\app\leilo\etl"
 
 def find_latest_csv(directory):
     """
-    Encontra o arquivo CSV mais recente com o padrão 'output_YYYYMMDD_HHMMSS.csv'
+    Encontra o arquivo CSV mais recente com o padrão 'leilo_YYYYMMDD_HHMMSS.csv'
     em um dado diretório e retorna o caminho completo e seu timestamp.
     Retorna (caminho_do_arquivo, timestamp_do_arquivo)
     """
     latest_csv = None
     latest_timestamp = None
     
-    # Regex para encontrar arquivos com o padrão 'output_YYYYMMDD_HHMMSS.csv'
+    # Regex para encontrar arquivos com o padrão 'leilo_YYYYMMDD_HHMMSS.csv'
     # Captura o timestamp para comparação
     csv_pattern = re.compile(r"leilo_(\d{8}_\d{6})\.csv")
 
@@ -50,6 +50,7 @@ def process_and_display_data():
     Carrega os dados do CSV mais recente, os exibe em formato de tabela
     e os exporta para um arquivo Excel com um ID único no nome,
     salvo em um caminho específico, e com a coluna 'titulo' desmembrada,
+    a coluna 'modelo' desmembrada,
     e a coluna 'situação' duplicada e formatada como 'data leilão'.
     Também compara a data/hora atual com a do arquivo mais recente.
     """
@@ -59,7 +60,7 @@ def process_and_display_data():
     CSV_FILE_PATH, latest_file_timestamp = find_latest_csv(CSV_DIRECTORY)
 
     if not CSV_FILE_PATH:
-        print(f"[ERRO] Nenhum arquivo CSV com o padrão 'output_YYYYMMDD_HHMMSS.csv' encontrado em '{CSV_DIRECTORY}'.")
+        print(f"[ERRO] Nenhum arquivo CSV com o padrão 'leilo_YYYYMMDD_HHMMSS.csv' encontrado em '{CSV_DIRECTORY}'.")
         print("Certifique-se de que o scraper foi executado com sucesso e o CSV foi gerado.")
         print("Verifique também o mapeamento de volumes no seu docker-compose.yml, se aplicável.")
         return
@@ -73,10 +74,6 @@ def process_and_display_data():
         print(f"[INFO] Hora atual: {current_time.strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"[INFO] Hora do arquivo mais recente: {latest_file_timestamp.strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"[INFO] Diferença de tempo desde o arquivo mais recente: {time_difference}")
-        # Opcional: Você pode adicionar lógica aqui para verificar se a diferença é maior que um certo limite
-        # Por exemplo, se o arquivo for mais antigo que 24 horas:
-        # if time_difference > timedelta(days=1):
-        #     print("[ALERTA] O arquivo CSV mais recente tem mais de 24 horas!")
     else:
         print("[WARN] Não foi possível determinar o timestamp do arquivo CSV mais recente para comparação.")
     # --- Fim da Comparação ---
@@ -87,46 +84,90 @@ def process_and_display_data():
         print(f"[INFO] Dados carregados com sucesso do '{CSV_FILE_PATH}'.")
         print(f"[INFO] Total de {len(df)} registros encontrados.")
 
-        # --- Desmembrar a coluna 'titulo' ---
-        # Aparentemente a coluna 'titulo' contém informações como 'MARCA/MODELO'
-        # Vamos tentar desmembrá-la em 'Marca' e 'Modelo'
-        if 'Título' in df.columns: # Alterado de 'titulo' para 'Título' para corresponder ao scraper
-            # Usa .str.split() para dividir a string pelo '/'
-            # expand=True cria novas colunas a partir dos elementos divididos
-            # .fillna('') para preencher valores ausentes com string vazia, se a divisão não gerar 2 partes
-            split_title = df['Título'].str.split('/', n=1, expand=True).fillna('')
+        
+        ### Limpeza da Coluna 'KM'
+        
+        #Caso a coluna 'KM' exista, ela será processada para **remover apenas o texto 'km'**, mantendo a formatação numérica e a pontuação (como `.`, `,`) intactas. O tipo de dado da coluna permanecerá como **string** (`object`) para que a pontuação seja preservada visualmente.
 
-            # Atribui as novas colunas
-            df['Marca'] = split_title[0].str.strip() # Remove espaços em branco
-            # Verifica se a segunda parte existe antes de atribuir ao 'Modelo'
+    
+        if 'KM' in df.columns:
+            # Converte para string para garantir operações de string
+            df['KM'] = df['KM'].astype(str)
+            # Remove 'km' (case-insensitive) e espaços extras antes/depois
+            df['KM'] = df['KM'].str.replace(r'km', '', flags=re.IGNORECASE).str.strip()
+            # A coluna 'KM' permanecerá como tipo de dado 'object' (string) para preservar a pontuação.
+            print("[INFO] Coluna 'KM' limpa: 'km' removido, numeração e pontuação mantidas como strings.")
+        else:
+            print("[WARN] Coluna 'KM' não encontrada. Pulando a limpeza da coluna.")
+      
+
+        
+        ### Desmembramento e Ajuste de Colunas
+      
+        # --- Desmembrar a coluna 'Título' e extrair 'Fabricante_Veiculo' ---
+        if 'Título' in df.columns:
+            split_title = df['Título'].str.split('/', n=1, expand=True).fillna('')
+            # Criando 'Fabricante_Veiculo'
+            df['Fabricante_Veiculo'] = split_title[0].str.strip() 
+            
+            # --- AJUSTE NA COLUNA 'Fabricante_Veiculo' ---
+            if 'Fabricante_Veiculo' in df.columns:
+                df['Fabricante_Veiculo'] = df['Fabricante_Veiculo'].replace({
+                    'VOLKSWAGEN': 'VW - VolksWagen',
+                    'CHEVROLET': 'GM - Chevrolet'
+                })
+                print("[INFO] Coluna 'Fabricante_Veiculo' ajustada para 'VW - VolksWagen' e 'GM - Chevrolet'.")
+            else:
+                print("[WARN] Coluna 'Fabricante_Veiculo' não encontrada após extração. Não foi possível realizar o ajuste.")
+            # --- FIM DO AJUSTE ---
+
             if len(split_title.columns) > 1:
                 df['Modelo'] = split_title[1].str.strip()
             else:
-                df['Modelo'] = '' # Se não houver segunda parte, define como vazio
-
-            print("[INFO] Coluna 'Título' desmembrada em 'Marca' e 'Modelo'.")
+                df['Modelo'] = ''
+            print("[INFO] Coluna 'Título' desmembrada, 'Fabricante_Veiculo' extraído e 'Modelo' criado/atualizado.")
         else:
-            print("[WARN] Coluna 'Título' não encontrada no CSV. Não foi possível desmembrar.")
+            print("[WARN] Coluna 'Título' não encontrada no CSV. Não foi possível desmembrar e extrair Fabricante_Veiculo/Modelo.")
 
-        # --- Duplicar e formatar a coluna 'situação' para 'data leilão' ---
-        # No scraper, a coluna 'Data Leilão' já é extraída e formatada.
-        # Agora o ETL pode usá-la diretamente.
+        # --- Extrair 'Modelo_Veiculo' da coluna 'Modelo' ---
+        if 'Modelo' in df.columns:
+            split_model = df['Modelo'].str.split(' ', n=1, expand=True).fillna('')
+            df['Modelo_Veiculo'] = split_model[0].str.strip()
+            
+            if len(split_model.columns) > 1:
+                df['Modelo'] = split_model[1].str.strip()
+            else:
+                df['Modelo'] = '' 
+            print("[INFO] Coluna 'Modelo' desmembrada, 'Modelo_Veiculo' extraído.")
+        else:
+            print("[WARN] Coluna 'Modelo' não encontrada. Não foi possível extrair 'Modelo_Veiculo'.")
+
+
+        # --- Duplicar e formatar a coluna 'Data Leilão' para 'data leilão' ---
         if 'Data Leilão' in df.columns:
-            # Garante que a coluna 'Data Leilão' esteja no formato string
             df['data leilão'] = df['Data Leilão'].astype(str).str.strip()
             print("[INFO] Coluna 'Data Leilão' usada para 'data leilão'.")
-        elif 'Situação' in df.columns: # Fallback para 'Situação' se 'Data Leilão' não existir
+        elif 'Situação' in df.columns:
             df['data leilão'] = df['Situação'].astype(str)
             df['data leilão'] = df['data leilão'].str.replace("Leilão ao vivo em: ", "", regex=False).str.strip()
             try:
-                # O ano precisa ser inferido corretamente para a conversão de data/hora
-                # Uma abordagem mais robusta seria tentar diferentes formatos ou usar bibliotecas de parse mais inteligentes
-                # Para este exemplo, vamos assumir que a data é do ano atual se apenas a hora é fornecida
-                df['data leilão'] = df['data leilão'].apply(lambda x: pd.to_datetime(
-                    f"{datetime.now().year}-{datetime.now().month}-{datetime.now().day} {x.replace('h', ':').replace('m', ':').replace('s', '')}",
-                    format="%Y-%m-%d %H:%M:%S"
-                ).strftime("%d/%m/%Y") if pd.notna(x) and x.strip() else '')
-                print("[INFO] Coluna 'Situação' duplicada e formatada para 'data leilão' (dd/mm/aaaa) como fallback.")
+                def format_date_from_situacao(text):
+                    if pd.isna(text) or not text.strip():
+                        return ''
+                    
+                    date_match = re.search(r'(\d{2}/\d{2}/\d{4})', text)
+                    if date_match:
+                        return date_match.group(1)
+                    
+                    time_match = re.search(r'(\d{2}h\d{2}m\d{2}s)', text)
+                    if time_match:
+                        current_date = datetime.now().strftime("%d/%m/%Y")
+                        return current_date
+                    
+                    return ''
+                
+                df['data leilão'] = df['data leilão'].apply(format_date_from_situacao)
+                print("[INFO] Coluna 'Situação' usada como fallback e formatada para 'data leilão' (dd/mm/aaaa).")
             except Exception as e:
                 print(f"[ERRO] Ocorreu um erro ao formatar a coluna 'data leilão' do fallback: {e}.")
         else:
@@ -134,30 +175,25 @@ def process_and_display_data():
 
 
         # Exibe a tabela completa no console
-        # Configura pandas para exibir todas as colunas e mais linhas se necessário
         pd.set_option('display.max_columns', None)
         pd.set_option('display.width', 1000)
-        pd.set_option('display.max_rows', None) # Exibe todas as linhas, ajuste se houver muitos dados
+        pd.set_option('display.max_rows', None)
 
         print("\n--- Tabela de Dados Extraídos ---")
-        print(df.to_string()) # Usa to_string() para melhor formatação no console
+        print(df.to_string())
         print("\n--- Fim da Tabela ---")
 
         # Gera um timestamp para o nome do arquivo Excel, garantindo unicidade
         timestamp_excel = datetime.now().strftime("%Y%m%d_%H%M%S")
-        # Define o nome do arquivo Excel
         EXCEL_FILE_NAME = f"leilo_tratado_{timestamp_excel}.xlsx"
 
-        # Define o caminho completo para o arquivo Excel de saída
         OUTPUT_DIR = r"C:\Users\anton\Desktop\parque_leiloes_scraper\app\leilo\etl_tratado"
         EXCEL_FILE_PATH = os.path.join(OUTPUT_DIR, EXCEL_FILE_NAME)
 
-        # Garante que o diretório de saída exista
         os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-        # Exporta o DataFrame para um arquivo Excel
         try:
-            df.to_excel(EXCEL_FILE_PATH, index=False) # index=False para não incluir o índice do DataFrame como uma coluna no Excel
+            df.to_excel(EXCEL_FILE_PATH, index=False)
             print(f"[INFO] Dados exportados com sucesso para '{EXCEL_FILE_PATH}'.")
         except Exception as excel_err:
             print(f"[ERRO] Ocorreu um erro ao exportar para Excel: {excel_err}")

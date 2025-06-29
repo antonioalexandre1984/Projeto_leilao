@@ -11,6 +11,9 @@ from selenium.common.exceptions import NoSuchElementException, WebDriverExceptio
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
+# Importa as funções de banco de dados e configurações do seu módulo db_utils
+from db_utils.db_operations import connect_db, create_table_consolidado, insert_data_consolidado
+
 def safe_get_element_text(parent_element, by_method, selector, wait_time=5):
     """
     Tenta obter o texto de um elemento da web usando um método By e um seletor específicos.
@@ -102,7 +105,7 @@ try:
 
     # Espera inicial para a página carregar os primeiros lotes
     try:
-        WebDriverWait(driver, 30).until(
+        WebDriverWait(driver, 20).until(
             EC.presence_of_element_located((By.CSS_SELECTOR, "li.wr3[class*='LL_box_']"))
         )
         print("[INFO] Primeiros lotes da página principal encontrados.")
@@ -129,8 +132,8 @@ try:
         if current_num_lotes == last_num_lotes:
             print(f"[INFO] Nenhum lote novo carregado na última rolagem. Total: {current_num_lotes}.")
             if scroll_attempts >= MAX_SCROLL_ATTEMPTS:
-                 print(f"[INFO] Limite de {MAX_SCROLL_ATTEMPTS} tentativas de rolagem atingido. Parando.")
-                 break
+                    print(f"[INFO] Limite de {MAX_SCROLL_ATTEMPTS} tentativas de rolagem atingido. Parando.")
+                    break
             # Dê mais algumas tentativas caso o carregamento seja lento
             scroll_attempts += 1
             print(f"[INFO] Tentando rolar novamente... ({scroll_attempts}/{MAX_SCROLL_ATTEMPTS})")
@@ -235,11 +238,11 @@ try:
                     )
                     # Verifica se a aba já está ativa (pela classe 'back_F5F5F5' no HTML fornecido)
                     if "back_F5F5F5" not in descricao_tab.get_attribute("class"):
-                         descricao_tab.click()
-                         print("    - Clicado na aba 'DESCRIÇÃO'.")
-                         time.sleep(2) # Pausa para o conteúdo da aba carregar
+                        descricao_tab.click()
+                        print("    - Clicado na aba 'DESCRIÇÃO'.")
+                        time.sleep(2) # Pausa para o conteúdo da aba carregar
                     else:
-                         print("    - Aba 'DESCRIÇÃO' já estava ativa.")
+                        print("    - Aba 'DESCRIÇÃO' já estava ativa.")
 
                     # 2. Extrair o conteúdo da descrição da área revelada
                     # Com base no HTML fornecido, a descrição detalhada está dentro de:
@@ -267,7 +270,7 @@ try:
                         ano_fabricacao_match = re.search(r"Ano de Fabricação: (.+?)\nAno Modelo:", descricao_detalhada)
                         ano_modelo_match = re.search(r"Ano Modelo: (.+?)\nChaves:", descricao_detalhada)
                         chaves_match = re.search(r"Chaves: (.+?)\nCondição do Motor:", descricao_detalhada)
-                        condicao_motor_match = re.search(r"Condição do Motor: (.+?)\n(?=Tabela FIPE|$)".replace(u'\xa0', u' '), descricao_detalhada) # Usar lookahead para pegar até Tabela FIPE ou fim da string. Cuidado com non-breaking space
+                        condicao_motor_match = re.search(r"Condição do Motor: (.+?)\n(?=Tabela FIPE|$)", descricao_detalhada.replace(u'\xa0', u' ')) # Usar lookahead para pegar até Tabela FIPE ou fim da string. Cuidado com non-breaking space
                         tabela_fipe_match = re.search(r"Tabela FIPE R\$ (.+?)\nFinal da Placa:", descricao_detalhada) 
                         final_placa_match = re.search(r"Final da Placa: (.+?)\nCombustível:", descricao_detalhada)
                         combustivel_match = re.search(r"Combustível: (.+?)\nProcedência:", descricao_detalhada)
@@ -330,7 +333,7 @@ try:
                 except Exception as e:
                     print(f"[WARN] Erro inesperado ao retornar à página principal: {e}")
         else:
-            print("    - Situação não é 'LANCES ENCERRADOS!' ou link é 'N/A'. Não navegando para detalhes.")
+            print("    - Situação não é 'RECEBENDO LANCES' ou link é 'N/A'. Não navegando para detalhes.")
 
         # Adiciona os dados coletados à lista, incluindo os "N/A" para campos não encontrados
         dados.append({
@@ -361,14 +364,23 @@ try:
         })
 
 finally:
-   # --- Geração e diagnóstico do arquivo CSV ---
+    # --- Conexão e Inserção no PostgreSQL (para a tabela 'consolidado') ---
     if dados:
-        # A linha abaixo já pega a data e hora ATUAL do sistema onde o scraper está rodando.
+        conn = connect_db()
+        if conn:
+            create_table_consolidado(conn) # Cria a tabela 'consolidado'
+            for lote_data in dados:
+                insert_data_consolidado(conn, lote_data) # Insere dados na tabela 'consolidado'
+            conn.close()
+            print("[INFO] Dados inseridos na tabela 'consolidado' no PostgreSQL e conexão fechada.")
+        else:
+            print("[ERRO] Não foi possível conectar ao banco de dados, os dados não serão salvos no PostgreSQL.")
+            
+    # --- Geração e diagnóstico do arquivo CSV (mantido) ---
+    if dados:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        
-        # O nome do arquivo será baseado nessa data/hora atual.
-        output_file_name = f"leilao_parque_data_{timestamp}.csv" # Mantive 'data_' para consistência com o ETL
-        output_dir = "/app/etl" # Ou o caminho que você usa para salvar o CSV no container/máquina do scraper
+        output_file_name = f"leilao_parque_data_{timestamp}.csv"
+        output_dir = "/app/etl"
         os.makedirs(output_dir, exist_ok=True)
         output_path = os.path.join(output_dir, output_file_name)
 
@@ -393,3 +405,4 @@ finally:
         print("[INFO] Fechando navegador.")
         driver.quit()
     print("[INFO] Raspagem concluída.")
+    print("✅ Extração de dados do Parque dos Leilões concluída com sucesso!")

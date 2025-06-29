@@ -1,0 +1,22 @@
+FROM python:3.10-slim
+
+WORKDIR /app
+
+# Instala dependências do sistema (para psycopg2 e Streamlit)
+RUN apt-get update && apt-get install -y build-essential libpq-dev curl
+
+# Copia o arquivo de requisitos diretamente da raiz do contexto de build (ou seja, da pasta 'analizer')
+COPY requirements.txt .
+
+# Instala as dependências Python
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copia todo o restante do conteúdo da pasta 'analizer' para o diretório de trabalho no container
+# Isso incluirá dashboard.py, env, db_utils, etc.
+COPY . .
+
+# Expõe a porta que o Streamlit usará
+EXPOSE 8501
+
+# Define o comando para iniciar o Streamlit
+CMD ["streamlit", "run", "dashboard.py", "--server.port=8501", "--server.address=0.0.0.0"]
