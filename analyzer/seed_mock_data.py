@@ -1,7 +1,7 @@
 import psycopg2
 import random
 # Importa a função de conexão do seu módulo db_operations
-from db_utils.db_operations import connect_db, create_table_leilao_data, create_table_consolidado
+from db_utils.adb_operations import connect_db, create_table_leilao_data, create_table_consolidado
 
 def run_seed_data():
     """

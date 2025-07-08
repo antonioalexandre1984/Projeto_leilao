@@ -18,7 +18,7 @@ DB_PASS = os.getenv("PG_PASSWORD")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # Inicializa o estado da sessão para armazenar a resposta do Gemini
-if 'gemini_response' not in st.session_state:
+if 'gemini_response' not in st.session_state: # Linha corrigida aqui
     st.session_state.gemini_response = ""
 if 'selected_lote_data' not in st.session_state:
     st.session_state.selected_lote_data = None
@@ -27,10 +27,9 @@ if 'selected_lote_data' not in st.session_state:
 @st.cache_data
 def carregar_dados():
     """
-    Carrega dados da tabela 'lotes' do banco de dados PostgreSQL.
+    Carrega dados das tabelas 'leilo', 'parque_leiloes_oficial' e 'loop' do banco de dados PostgreSQL.
+    Mapeia as colunas para um formato padronizado e combina os dados.
     Usa st.cache_data para cachear os dados e evitar recarregar desnecessariamente.
-    Nota: Este dashboard está configurado para a tabela 'lotes'.
-    Se seus scrapers populam 'leilao_data' ou 'consolidado', ajuste a query SQL aqui.
     """
     try:
         conn = psycopg2.connect(
@@ -40,12 +39,115 @@ def carregar_dados():
             host=DB_HOST,
             port="5432" # Porta padrão do PostgreSQL dentro da rede Docker
         )
-        df = pd.read_sql("SELECT modelo, ano, km, preco_lote FROM lotes", conn)
+
+        all_data = []
+
+        # Função auxiliar para buscar e padronizar dados de uma tabela
+        def fetch_table_data(table_name, column_map, conn):
+            # Seleciona apenas as colunas que existem no mapa
+            cols_to_select = ", ".join(column_map.keys())
+            query = f"SELECT {cols_to_select} FROM {table_name}"
+            
+            try:
+                df = pd.read_sql(query, conn)
+                df.rename(columns=column_map, inplace=True)
+                df['source_table'] = table_name # Adiciona a tabela de origem para rastreamento
+                st.success(f"Dados da tabela '{table_name}' carregados com sucesso!")
+                return df
+            except Exception as e:
+                st.warning(f"Não foi possível carregar dados da tabela '{table_name}'. Verifique se a tabela existe e as colunas estão corretas. Erro: {e}")
+                return pd.DataFrame()
+
+        # Mapeamento de colunas para a tabela 'leilo'
+        leilo_columns = {
+            "veiculo_ano_fabricacao": "ano_fabricacao",
+            "veiculo_data_leilao": "data_leilao",
+            "veiculo_tipo_combustivel": "tipo_combustivel",
+            "veiculo_cor": "cor",
+            "veiculo_possui_chave": "possui_chave",
+            "veiculo_tipo_retomada": "tipo_retomada",
+            "veiculo_tipo": "tipo_veiculo",
+            "veiculo_valor_fipe": "valor_fipe",
+            "veiculo_fabricante": "fabricante",
+            "veiculo_imagem": "imagem",
+            "veiculo_km": "km",
+            "veiculo_link_lote": "link_lote",
+            "veiculo_modelo": "modelo",
+            "veiculo_situacao": "situacao",
+            "veiculo_titulo": "titulo",
+            "veiculo_patio_uf": "patio_uf",
+            "veiculo_valor_lance_atual": "preco_lote", # Preço primário para regressão
+        }
+        df_leilo = fetch_table_data("leilo", leilo_columns, conn)
+        if not df_leilo.empty:
+            all_data.append(df_leilo)
+
+        # Mapeamento de colunas para a tabela 'parque_leiloes_oficial'
+        parque_leiloes_oficial_columns = {
+            "Veiculo_Ano_Fabricacao": "ano_fabricacao",
+            "Veiculo_Ano_Modelo": "ano_modelo",
+            "Veiculo_Condicao_Motor": "condicao_motor",
+            "Veiculo_Data_Leilao": "data_leilao",
+            "Veiculo_Fabricante": "fabricante",
+            "Veiculo_Final_Placa": "final_placa",
+            "Veiculo_Imagem": "imagem",
+            "Veiculo_KM": "km",
+            "Veiculo_Lance_Inicial": "preco_lote", # Preço primário para regressão
+            "Veiculo_Link_Lote": "link_lote",
+            "Veiculo_Modelo": "modelo",
+            "Veiculo_Possui_Chave": "possui_chave",
+            "Veiculo_Tipo_Combustivel": "tipo_combustivel",
+            "Veiculo_Tipo_Retomada": "tipo_retomada",
+            "Veiculo_Titulo": "titulo",
+            "Veiculo_Total_Lances": "total_lances",
+            "Veiculo_Valor_Fipe": "valor_fipe",
+        }
+        df_parque = fetch_table_data("parque_leiloes_oficial", parque_leiloes_oficial_columns, conn)
+        if not df_parque.empty:
+            all_data.append(df_parque)
+
+        # Mapeamento de colunas para a tabela 'loop'
+        loop_columns = {
+            "veiculo_link_lote": "link_lote",
+            "veiculo_titulo": "titulo",
+            "veiculo_fabricante": "fabricante",
+            "veiculo_modelo": "modelo",
+            "veiculo_versao": "versao",
+            "veiculo_ano_fabricacao": "ano_fabricacao",
+            "Veiculo_Ano_Modelo": "ano_modelo",
+            "Veiculo_Valor_Fipe": "valor_fipe",
+            "veiculo_blindado": "blindado",
+            "veiculo_chave": "possui_chave", # Mapeia 'veiculo_chave' para 'possui_chave'
+            "veiculo_funcionando": "funcionando",
+            "Veiculo_Tipo_Combustivel": "tipo_combustivel",
+            "veiculo_km": "km",
+            "Veiculo_Total_Lances": "total_lances",
+            "veiculo_numero_visualizacoes": "numero_visualizacoes",
+            "Veiculo_Data_Leilao": "data_leilao",
+            "veiculo_horario_leilao": "horario_leilao",
+            "Veiculo_Lance_Inicial": "preco_lote", # Preço primário para regressão
+            "veiculo_situacao": "situacao",
+        }
+        df_loop = fetch_table_data("loop", loop_columns, conn)
+        if not df_loop.empty:
+            all_data.append(df_loop)
+
         conn.close()
-        st.success("Dados carregados do banco de dados com sucesso!")
-        return df
+
+        if all_data:
+            df_combined = pd.concat(all_data, ignore_index=True)
+            
+            # Harmoniza a coluna 'ano' para a regressão: prefere 'ano_fabricacao', depois 'ano_modelo'
+            df_combined['ano'] = df_combined['ano_fabricacao'].fillna(df_combined['ano_modelo'])
+            
+            st.success("Dados carregados e combinados de todas as tabelas com sucesso!")
+            return df_combined
+        else:
+            st.warning("Nenhum dado foi carregado de nenhuma das tabelas especificadas. Verifique as configurações do banco de dados e os nomes das tabelas/colunas.")
+            return pd.DataFrame()
+
     except Exception as e:
-        st.error(f"Erro ao conectar ao banco de dados ou carregar dados: {e}")
+        st.error(f"Erro geral ao conectar ao banco de dados ou carregar dados: {e}")
         st.warning(f"Detalhes da conexão (verificados no container 'analyzer'): Host={DB_HOST}, DB={DB_NAME}, User={DB_USER}")
         return pd.DataFrame()
 
@@ -58,15 +160,17 @@ def estimar_valor(df):
     e modelos de ML mais complexos (e.g., Random Forest) para maior precisão.
     """
     # Certifica-se de que os tipos de dados estão corretos para o modelo
-    df['ano'] = pd.to_numeric(df['ano'], errors='coerce')
+    df['ano'] = pd.to_numeric(df['ano'], errors='coerce') # 'ano' é agora harmonizado em carregar_dados
     df['km'] = pd.to_numeric(df['km'], errors='coerce')
     df['preco_lote'] = pd.to_numeric(df['preco_lote'], errors='coerce')
 
     # Remove linhas com valores NaN resultantes da conversão, se houver
+    # Também remove linhas onde 'preco_lote' é 0 ou NaN, pois é a variável alvo
     df.dropna(subset=['ano', 'km', 'preco_lote'], inplace=True)
+    df = df[df['preco_lote'] > 0] # Garante que o preço seja positivo para cálculos significativos
 
     if df.empty or len(df) < 2: # Necessita de pelo menos 2 amostras para regressão
-        st.warning("Dados insuficientes para estimar o valor de mercado. Necessita de pelo menos 2 amostras válidas.")
+        st.warning("Dados insuficientes para estimar o valor de mercado. Necessita de pelo menos 2 amostras válidas com preço de lote positivo.")
         df['preco_estimado'] = 0.0
         df['desconto_percentual'] = 0.0
         df['oportunidade'] = False
@@ -79,7 +183,11 @@ def estimar_valor(df):
     try:
         modelo.fit(X, y)
         df['preco_estimado'] = modelo.predict(X)
+        
+        # Evita divisão por zero ou preço estimado negativo
         df['desconto_percentual'] = ((df['preco_estimado'] - df['preco_lote']) / df['preco_estimado']) * 100
+        df.loc[df['preco_estimado'] <= 0, 'desconto_percentual'] = 0 # Define como 0 se o preço estimado for não-positivo
+        
         df['oportunidade'] = df['desconto_percentual'] > 20 # Define oportunidade se o desconto for > 20%
     except Exception as e:
         st.error(f"Erro ao estimar valores de mercado: {e}. Verifique se há variância suficiente nos dados para a regressão.")
@@ -141,7 +249,7 @@ if not df.empty:
 
     if not top_lotes.empty:
         top_lotes = top_lotes.sort_values(by='desconto_percentual', ascending=False)
-        st.dataframe(top_lotes[['modelo', 'ano', 'km', 'preco_lote', 'preco_estimado', 'desconto_percentual', 'oportunidade']])
+        st.dataframe(top_lotes[['modelo', 'ano', 'km', 'preco_lote', 'preco_estimado', 'desconto_percentual', 'oportunidade', 'source_table']])
         st.info(f"Foram encontradas {len(top_lotes)} oportunidades de compra.")
     else:
         st.info("Nenhum lote identificado como oportunidade de compra no momento (desconto percentual inferior a 20%).")
@@ -180,7 +288,7 @@ if not df.empty:
     else:
         st.info("Não há lotes com oportunidade para análise detalhada no momento.")
 else:
-    st.warning("Nenhum dado encontrado para análise. Verifique a conexão com o banco de dados e se há dados na tabela 'lotes'.")
+    st.warning("Nenhum dado encontrado para análise. Verifique a conexão com o banco de dados e se há dados nas tabelas 'leilo', 'parque_leiloes_oficial' ou 'loop'.")
 
 st.markdown("---")
 st.markdown("Desenvolvido para análise de leilões de veículos.")

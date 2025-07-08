@@ -2,7 +2,7 @@
 # Remova as linhas sys e os.path.join, pois o PYTHONPATH no Docker Compose já deve lidar com isso.
 
 # A importação agora se baseia no PYTHONPATH e na estrutura de pacote (com __init__.py em db_utils)
-from db_utils.db_operations import connect_db
+from db_utils.adb_operations import connect_db
 
 if __name__ == "__main__":
     print("Iniciando teste de conexão ao banco de dados a partir do container 'analyzer'...")

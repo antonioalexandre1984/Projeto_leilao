@@ -5,20 +5,22 @@ FROM python:3.11-slim-buster
 WORKDIR /app
 
 # Instala as dependências necessárias para o Selenium e o Chromium
+# Certifique-se de que o chromium-driver está corretamente ligado/no PATH para o Selenium
 RUN apt-get update && apt-get install -y \
     chromium \
     chromium-driver \
     --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
-# Copia o arquivo requirements.txt (se você tiver um)
-COPY requirements.txt .
-
-# Instala as dependências Python
+# Copia o arquivo requirements.txt e instala as dependências Python
+# Mova a cópia do requirements.txt para ANTES do pip install
+# Copie todo o conteúdo da pasta 'parque' (que é o 'context' do build) para '/app'
+COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copia apenas o script parquedosleiloes.py para o diretório de trabalho
-COPY parquedosleiloes.py .
+# Copia o restante dos arquivos do seu projeto (incluindo db_utils)
+# A pasta 'parque' do host (seu contexto de build) será copiada para /app no container
+COPY . /app
 
 # Define o comando para executar o parquedosleiloes.py
 CMD ["python3", "parquedosleiloes.py"]

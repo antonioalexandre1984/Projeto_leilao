@@ -64,7 +64,7 @@ services:
       - PG_DATABASE=base_leilao
       - PG_USER=root
       - PG_PASSWORD=root
-      - PYTHONPATH=/app:/app/db_utils # Adiciona db_utils ao PYTHONPATH
+      - PYTHONPATH=/app # Adiciona db_utils ao PYTHONPATH
     command: python3 parquedosleiloes.py
     networks:
       - scraper_network
@@ -91,15 +91,15 @@ services:
     networks:
       - scraper_network
   
-  test:
-    build: ./teste
+  loop:
+    build: ./loop
     depends_on:
       selenium:
         condition: service_healthy
       db: # Adiciona dependência no serviço de banco de dados
         condition: service_healthy # Garante que o DB esteja saudável antes de iniciar o scraper
     volumes:
-      - ./teste:/app
+      - ./loop:/app
       - ./db_utils:/app/db_utils # Monta a pasta db_utils dentro do container
     environment:
       - TZ=America/Sao_Paulo
@@ -108,7 +108,7 @@ services:
       - PG_USER=root
       - PG_PASSWORD=root
       - PYTHONPATH=/app:/app/db_utils # Adiciona db_utils ao PYTHONPATH
-    command: python3 teste2.py
+    command: python3 loop.py
     networks:
       - scraper_network
 
