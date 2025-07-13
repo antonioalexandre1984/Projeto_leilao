@@ -18,54 +18,96 @@ from db_utils.db_operations import (
     insert_data_parque_leiloes_oficial
 )
 
-def safe_get_element_text(parent_element, by_method, selector, wait_time=5):
+def format_currency_brl(value, include_symbol=False):
     """
-    Tenta obter o texto de um elemento da web usando um método By e um seletor específicos.
-    'parent_element' pode ser o driver (para elementos globais) ou um WebElement (para elementos aninhados).
+    Formata um valor numérico para o formato de moeda brasileiro (BRL).
+    Ex: 12345.67 -> "12.345,67" ou "R$ 12.345,67"
+    Retorna "N/A" se o valor não for numérico ou for None.
+    """
+    if value is None or value == "N/A":
+        return "N/A"
+    
+    # Tenta converter para float, se for uma string numérica
+    if isinstance(value, str):
+        try:
+            value = float(value)
+        except ValueError:
+            return "N/A" # Não é um número válido
+
+    if isinstance(value, (int, float)):
+        # Formata para duas casas decimais, usa vírgula como separador decimal e ponto como separador de milhar
+        formatted_value = f"{value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        if include_symbol:
+            return f"R$ {formatted_value}"
+        else:
+            return formatted_value
+    return "N/A"
+
+
+def safe_get_element_text(element, css_selector, wait_time=2):
+    """
+    Tenta obter o texto de um elemento usando um seletor CSS.
+    'element' pode ser o driver (para elementos globais) ou um WebElement (para elementos aninhados).
     Retorna "N/A" se o elemento não for encontrado dentro do tempo limite.
     Prioriza .text, mas tenta .innerHTML se .text estiver vazio.
     """
     try:
-        found_element = WebDriverWait(parent_element, wait_time).until(
-            EC.presence_of_element_located((by_method, selector))
-        )
+        # Se 'element' for o driver, usa presence_of_element_located
+        if element == driver:
+            found_element = WebDriverWait(element, wait_time).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, css_selector))
+            )
+        # Se 'element' for um WebElement, busca dentro dele
+        else:
+            found_element = WebDriverWait(element, wait_time).until(
+                lambda p_elem: p_elem.find_element(By.CSS_SELECTOR, css_selector)
+            )
         
-        WebDriverWait(parent_element, wait_time).until(
-            lambda driver: found_element.text.strip() != "" or found_element.get_attribute('innerHTML').strip() != ""
+        # Espera adicional para que o texto do elemento não seja vazio ou apenas espaços
+        WebDriverWait(element, wait_time).until(
+            lambda driver_or_elem: found_element.text.strip() != "" or found_element.get_attribute('innerHTML').strip() != ""
         )
         
         text_content = found_element.text.strip()
-        if not text_content:
+        if not text_content: # Se .text estiver vazio, tenta .innerHTML
             text_content = found_element.get_attribute('innerHTML').strip()
+            # Substituir <br> por nova linha para regex funcionar melhor com innerHTML
             if text_content:
-                text_content = re.sub(r'<br\s*\/?>', '\n', text_content)
-                text_content = re.sub(r'\s+', ' ', text_content).strip()
-                text_content = text_content.replace(u'\xa0', u' ')
+                text_content = re.sub(r'<br\s*\/?>', '\n', text_content) # Converte <br> para nova linha
+                text_content = re.sub(r'\s+', ' ', text_content).strip() # Normaliza espaços novamente
+                text_content = text_content.replace(u'\xa0', u' ') # Remove non-breaking space explicitly
 
         return text_content if text_content else "N/A"
 
     except (NoSuchElementException, TimeoutException, StaleElementReferenceException):
         return "N/A"
     except Exception as e:
-        print(f"DEBUG: Erro inesperado em safe_get_element_text para seletor '{selector}': {e}")
+        print(f"DEBUG: Erro inesperado em safe_get_element_text para seletor '{css_selector}': {e}")
         return "N/A"
 
-def safe_get_element_attribute(parent_element, by_method, selector, attribute, wait_time=5):
+def safe_get_element_attribute(element, css_selector, attribute, wait_time=2):
     """
-    Tenta obter o valor de um atributo de um elemento da web usando um método By e um seletor.
-    'parent_element' pode ser o driver ou um WebElement.
+    Tenta obter o valor de um atributo de um elemento da web usando um seletor CSS.
+    'element' pode ser o driver ou um WebElement.
     Retorna "N/A" se o elemento não for encontrado, se tornar obsoleto ou se o atributo não existir.
     """
     try:
-        found_element = WebDriverWait(parent_element, wait_time).until(
-            EC.presence_of_element_located((by_method, selector))
-        )
+        # Se 'element' for o driver, usa presence_of_element_located
+        if element == driver:
+            found_element = WebDriverWait(element, wait_time).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, css_selector))
+            )
+        # Se 'element' for um WebElement, busca dentro dele
+        else:
+            found_element = WebDriverWait(element, wait_time).until(
+                lambda p_elem: p_elem.find_element(By.CSS_SELECTOR, css_selector)
+            )
         attr_value = found_element.get_attribute(attribute)
         return attr_value.strip() if attr_value else "N/A"
     except (NoSuchElementException, TimeoutException, StaleElementReferenceException):
         return "N/A"
     except Exception as e:
-        print(f"DEBUG: Erro inesperado em safe_get_element_attribute para seletor '{selector}' (atributo '{attribute}'): {e}")
+        print(f"DEBUG: Erro inesperado em safe_get_element_attribute para seletor '{css_selector}' (atributo '{attribute}'): {e}")
         return "N/A"
 
 # Configura as opções para o navegador Chrome.
@@ -81,17 +123,18 @@ options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) Apple
 SELENIUM_URL = "http://selenium:4444/wd/hub"
 
 driver = None
-MAX_CONNECTION_TRIES = 2
+MAX_CONNECTION_TRIES = 10 # Aumentado para 10 tentativas
+RETRY_DELAY = 5 # Aumentado para 5 segundos de espera
 
 for attempt in range(MAX_CONNECTION_TRIES):
     try:
-        print(f"[INFO] Tentando conectar ao Selenium ({attempt+1}/{MAX_CONNECTION_TRIES})...")
+        print(f"[INFO] Tentando conectar ao Selenium ({attempt+1}/{MAX_CONNECTION_TRIES})....")
         driver = webdriver.Remote(command_executor=SELENIUM_URL, options=options)
         print("[INFO] Conectado ao Selenium com sucesso!")
         break
     except WebDriverException as e:
-        print(f"[WARN] Selenium ainda não está pronto: {e}. Tentando novamente em 2 segundos...")
-        time.sleep(2)
+        print(f"[WARN] Selenium ainda não está pronto: {e}. Tentando novamente em {RETRY_DELAY} segundos...")
+        time.sleep(RETRY_DELAY)
 else:
     raise Exception("❌ Não foi possível conectar ao Selenium após várias tentativas. Encerrando.")
 
@@ -107,20 +150,28 @@ urls_categorias = [
 
 try:
     for url_main_page in urls_categorias:
-        print(f"\n--- Iniciando raspagem para a URL: {url_main_page} ---")
+        # Determina o tipo de veículo com base na URL
+        veiculo_tipo = "N/A"
+        if "veiculos" in url_main_page:
+            veiculo_tipo = "carros"
+        elif "motocicletas" in url_main_page:
+            veiculo_tipo = "motocicleta"
+        elif "utilitarios" in url_main_page:
+            veiculo_tipo = "utilitarios"
+        
+        print(f"\n--- Iniciando raspagem para a URL: {url_main_page} (Tipo: {veiculo_tipo}) ---")
         driver.get(url_main_page)
         print(f"[INFO] Página carregada: {driver.title}")
 
         # Espera inicial para a página carregar os primeiros lotes
         try:
-            WebDriverWait(driver, 10).until(
+            WebDriverWait(driver, 20).until( # Aumentado timeout
                 EC.presence_of_element_located((By.CSS_SELECTOR, "li.wr3[class*='LL_box_']"))
             )
             print("[INFO] Primeiros lotes da página principal encontrados.")
         except TimeoutException:
             print("❌ ERRO CRÍTICO: Nenhum lote encontrado na página principal dentro do tempo limite inicial. Verifique o seletor ou a URL.")
             driver.save_screenshot(f"erro_inicial_lotes_{url_main_page.split('/')[-1]}.png")
-            # Não levanta exceção aqui para permitir que outras URLs sejam processadas
             continue # Pula para a próxima URL na lista
 
         time.sleep(3) # Pausa adicional para estabilidade
@@ -128,12 +179,12 @@ try:
         # --- Lógica para rolar a página e carregar todos os lotes (rolagem infinita) ---
         last_num_lotes = 0
         scroll_attempts = 0
-        MAX_SCROLL_ATTEMPTS = 20 # Limite de tentativas para evitar loops infinitos
+        MAX_SCROLL_ATTEMPTS = 50 # Aumentado para mais tentativas de rolagem
 
         print("[INFO] Iniciando rolagem da página para carregar todos os lotes...")
         while True:
             driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(3) # Tempo maior para permitir o carregamento de novos lotes
+            time.sleep(6) # Tempo maior para permitir o carregamento de novos lotes
 
             new_lotes_on_page = driver.find_elements(By.CSS_SELECTOR, "li.wr3[class*='LL_box_']")
             current_num_lotes = len(new_lotes_on_page)
@@ -177,7 +228,6 @@ try:
                     continue
 
             # Inicializa todas as variáveis para garantir que "N/A" seja atribuído se não encontrado
-            # Usando os nomes das colunas de "DE" do mapeamento para o dicionário 'dados'
             titulo = "N/A"
             link = "N/A"
             imagem = "N/A"
@@ -196,29 +246,51 @@ try:
             procedencia_veiculo = "N/A"
             total_lances = "N/A" 
             modelo_veiculo = "N/A" 
+            veiculo_patio_uf = "Brasilia-DF (AGUAS CLARAS/DF)" 
+            veiculo_valor_vendido = "N/A" # Nova variável inicializada
 
             print(f"\n🔍 Extraindo dados do Lote {index+1} de {num_lotes} na URL: {url_main_page}:")
 
             # Extração de dados da visualização inicial do lote
-            titulo = safe_get_element_text(lote_element, By.CSS_SELECTOR, "li.LL_nome")
-            link = safe_get_element_attribute(lote_element, By.CSS_SELECTOR, "a.posr.db.m10", "href")
+            titulo = safe_get_element_text(lote_element, "li.LL_nome")
+            link = safe_get_element_attribute(lote_element, "a.posr.db.m10", "href")
+            if link == "N/A":
+                link = safe_get_element_attribute(lote_element, "div.header-card a", "href")
             if link and not link.startswith("http"):
                 link = "https://parquedosleiloesoficial.com" + link
 
-            imagem = safe_get_element_attribute(lote_element, By.CSS_SELECTOR, "img#phfotos_resposive", "src")
+            imagem = safe_get_element_attribute(lote_element, "img#phfotos_resposive", "src")
             if imagem and not imagem.startswith("http"):
-                imagem = "https://parquedosleiloesoficial.com" + imagem
+                imagem = "https://parquedosleiloesoficial.com" + imagem 
 
-            data_leilao_raw = safe_get_element_text(lote_element, By.CSS_SELECTOR, "li.LL_data_fim data.dib")
+            data_leilao_raw = safe_get_element_text(lote_element, "li.LL_data_fim data.dib")
             data_leilao = data_leilao_raw if data_leilao_raw != "N/A" else "N/A"
             
-            lance_inicial_raw = safe_get_element_text(lote_element, By.CSS_SELECTOR, "div.LL_lance_ini b.fz15")
+            lance_inicial_raw = safe_get_element_text(lote_element, "div.LL_lance_ini b.fz15")
             lance_inicial = re.sub(r'[^\d,]', '', lance_inicial_raw).replace(',', '.') if lance_inicial_raw != "N/A" else "N/A"
 
-            valor_do_lance_raw = safe_get_element_text(lote_element, By.CSS_SELECTOR, "div.LL_lance_atual b.fz15")
-            valor_do_lance = re.sub(r'[^\d,]', '', valor_do_lance_raw).replace(',', '.') if valor_do_lance_raw != "N/A" else "N/A"
+            valor_do_lance_raw = safe_get_element_text(lote_element, "div.LL_lance_atual b.fz15")
+            
+            # Aplica a formatação de moeda para valor_do_lance
+            if valor_do_lance_raw != "N/A":
+                cleaned_value = re.sub(r'[^\d,]', '', valor_do_lance_raw).replace(',', '.')
+                try:
+                    valor_do_lance = format_currency_brl(float(cleaned_value), include_symbol=True)
+                except ValueError:
+                    valor_do_lance = "N/A"
+            else:
+                valor_do_lance = "N/A"
 
-            situacao = safe_get_element_text(lote_element, By.CSS_SELECTOR, "div.LL_situacao p.itm-statusname")
+            situacao = safe_get_element_text(lote_element, "div.LL_situacao p.itm-statusname")
+
+            # Lógica para preencher veiculo_valor_vendido
+            if situacao == "ARREMATADO" and valor_do_lance != "N/A":
+                veiculo_valor_vendido = valor_do_lance
+            elif situacao == "RECEBENDO LANCES": # Nova condição para "RECEBENDO LANCES"
+                veiculo_valor_vendido = format_currency_brl(0.00, include_symbol=True) # Define como "R$ 0,00"
+            else:
+                veiculo_valor_vendido = "N/A"
+
 
             print(f"    - Título: {titulo}")
             print(f"    - Situação: {situacao}")
@@ -243,8 +315,8 @@ try:
                         else:
                             print("    - Aba 'DESCRIÇÃO' já estava ativa.")
 
-                        seletor_conteudo_descricao = (By.CSS_SELECTOR, "li.box__1 div.editor.taj p") 
-                        descricao_detalhada_raw = safe_get_element_text(driver, seletor_conteudo_descricao[0], seletor_conteudo_descricao[1], wait_time=5)
+                        seletor_conteudo_descricao = "li.box__1 div.editor.taj p"
+                        descricao_detalhada_raw = safe_get_element_text(driver, seletor_conteudo_descricao, wait_time=5)
                         
                         if descricao_detalhada_raw != "N/A" and descricao_detalhada_raw.strip() != "":
                             print("    - Conteúdo da DESCRIÇÃO detalhada encontrado e extraído. Processando...")
@@ -255,13 +327,15 @@ try:
                             ano_fabricacao_match = re.search(r"Ano de Fabricação: (.+?)(?=\nAno Modelo:|$)", descricao_detalhada_raw)
                             ano_modelo_match = re.search(r"Ano Modelo: (.+?)(?=\nChaves:|$)", descricao_detalhada_raw)
                             chaves_match = re.search(r"Chaves: (.+?)(?=\nCondição do Motor:|$)", descricao_detalhada_raw)
-                            condicao_motor_match = re.search(r"Condição do Motor: (.+?)(?=\nTabela FIPE:|$)", descricao_detalhada_raw.replace(u'\xa0', u' '))
-                            tabela_fipe_match = re.search(r"Tabela FIPE: R\$ (.+?)(?=\nFinal da Placa:|$)", descricao_detalhada_raw) 
+                            condicao_motor_match = re.search(r"Condição do Motor: (.+?)(?=\nTabela FIPE R\$|$)", descricao_detalhada_raw.replace(u'\xa0', u' '))
+                            
+                            # Ajuste do regex para 'tabela_fipe_veiculo'
+                            tabela_fipe_match = re.search(r"Tabela FIPE R\$ ([0-9.,]+)", descricao_detalhada_raw) 
+                            
                             final_placa_match = re.search(r"Final da Placa: (.+?)(?=\nCombustível:|$)", descricao_detalhada_raw)
                             combustivel_match = re.search(r"Combustível: (.+?)(?=\nProcedência:|$)", descricao_detalhada_raw)
                             procedencia_match = re.search(r"Procedência: (.+)", descricao_detalhada_raw)
                             total_lances_match = re.search(r"Total Lances: (\d+)", descricao_detalhada_raw) 
-                            modelo_match = re.search(r"Modelo: (.+?)(?=\nChaves:|$)", descricao_detalhada_raw) 
 
                             marca_veiculo = marca_match.group(1).strip() if marca_match else "N/A"
                             km_veiculo = km_match.group(1).strip() if km_match else "N/A"
@@ -270,8 +344,13 @@ try:
                             chaves_veiculo = chaves_match.group(1).strip() if chaves_match else "N/A"
                             condicao_motor_veiculo = condicao_motor_match.group(1).strip() if condicao_motor_match else "N/A"
                             
+                            # Limpeza e formatação do valor da Tabela FIPE
                             if tabela_fipe_match:
-                                tabela_fipe_veiculo = re.sub(r'[^\d,]', '', tabela_fipe_match.group(1)).replace(',', '.')
+                                cleaned_value = tabela_fipe_match.group(1).replace('.', '').replace(',', '.')
+                                try:
+                                    tabela_fipe_veiculo = format_currency_brl(float(cleaned_value), include_symbol=True)
+                                except ValueError:
+                                    tabela_fipe_veiculo = "N/A"
                             else:
                                 tabela_fipe_veiculo = "N/A"
                                 
@@ -279,8 +358,6 @@ try:
                             combustivel_veiculo = combustivel_match.group(1).strip() if combustivel_match else "N/A"
                             procedencia_veiculo = procedencia_match.group(1).strip() if procedencia_match else "N/A"
                             total_lances = total_lances_match.group(1).strip() if total_lances_match else "N/A"
-                            modelo_veiculo = modelo_match.group(1).strip() if modelo_match else "N/A"
-
 
                             print(f"        - Marca Veiculo: {marca_veiculo}")
                             print(f"        - KM Veiculo: {km_veiculo}")
@@ -293,7 +370,6 @@ try:
                             print(f"        - Combustivel Veiculo: {combustivel_veiculo}")
                             print(f"        - Procedencia Veiculo: {procedencia_veiculo}")
                             print(f"        - Total Lances: {total_lances}")
-                            print(f"        - Modelo Veiculo: {modelo_veiculo}")
                         else:
                             print("    - Conteúdo da DESCRIÇÃO do veículo não encontrado ou está vazia.")
 
@@ -319,8 +395,18 @@ try:
             else:
                 print("    - Situação não é 'RECEBENDO LANCES' ou link é 'N/A'. Não navegando para detalhes.")
 
-            # Adiciona os dados coletados à lista, usando os nomes de coluna de "DE" do mapeamento
-            # As chaves aqui devem ser as mesmas que no transformed_data abaixo para consistência
+            # Extração de modelo_veiculo a partir do titulo
+            if titulo != "N/A":
+                words_in_title = titulo.split(' ')
+                if len(words_in_title) > 1:
+                    modelo_veiculo = words_in_title[1].strip()
+                else:
+                    modelo_veiculo = "N/A"
+            else:
+                modelo_veiculo = "N/A"
+            print(f"    - Modelo Veiculo (do título): {modelo_veiculo}") # Print após a atribuição
+
+            # Adiciona os dados coletados à lista, incluindo os novos campos
             dados.append({
                 "titulo": titulo,
                 "link": link,
@@ -340,6 +426,9 @@ try:
                 "procedencia_veiculo": procedencia_veiculo,
                 "total_lances": total_lances,
                 "modelo_veiculo": modelo_veiculo,
+                "veiculo_tipo": veiculo_tipo,
+                "veiculo_patio_uf": veiculo_patio_uf,
+                "veiculo_valor_vendido": veiculo_valor_vendido, # Nova coluna adicionada
             })
 
 finally:
@@ -367,26 +456,28 @@ finally:
                 # para as chaves esperadas pela função `insert_data_parque_leiloes_oficial`
                 # (que correspondem aos nomes das colunas "PARA" no banco de dados, agora em minúsculas).
                 transformed_data = {
-                    "veiculo_titulo": lote_data.get("titulo", "N/A"), # Ajustado para minúsculas
-                    "veiculo_link_lote": lote_data.get("link", "N/A"), # Ajustado para minúsculas
-                    "veiculo_imagem": lote_data.get("imagem", "N/A"), # Ajustado para minúsculas
-                    "veiculo_km": lote_data.get("km_veiculo", "N/A"), # Ajustado para minúsculas
-                    "veiculo_lance_inicial": lote_data.get("lance_inicial", "N/A"), # Ajustado para minúsculas
-                    "veiculo_valor_lance_atual": lote_data.get("valor_do_lance", "N/A"), # Ajustado para minúsculas
-                    "veiculo_data_leilao": lote_data.get("data_leilao", "N/A"), # Ajustado para minúsculas
-                    "veiculo_fabricante": lote_data.get("marca_veiculo", "N/A"), # Ajustado para minúsculas
-                    "veiculo_final_placa": lote_data.get("final_da_placa_veiculo", "N/A"), # Ajustado para minúsculas
-                    "veiculo_ano_fabricacao": lote_data.get("ano_fabricacao_veiculo", "N/A"), # Ajustado para minúsculas
-                    "veiculo_ano_modelo": lote_data.get("ano_modelo_veiculo", "N/A"), # Ajustado para minúsculas
-                    "veiculo_possui_chave": lote_data.get("chaves_veiculo", "N/A"), # Ajustado para minúsculas
-                    "veiculo_condicao_motor": lote_data.get("condicao_motor_veiculo", "N/A"), # Ajustado para minúsculas
-                    "veiculo_valor_fipe": lote_data.get("tabela_fipe_veiculo", "N/A"), # Ajustado para minúsculas
-                    "veiculo_tipo_combustivel": lote_data.get("combustivel_veiculo", "N/A"), # Ajustado para minúsculas
-                    "veiculo_tipo_retomada": lote_data.get("procedencia_veiculo", "N/A"), # Ajustado para minúsculas
-                    "veiculo_total_lances": lote_data.get("total_lances", "N/A"), # Ajustado para minúsculas
-                    "veiculo_modelo": lote_data.get("modelo_veiculo", "N/A"), # Ajustado para minúsculas
+                    "veiculo_titulo": lote_data.get("titulo", "N/A"),
+                    "veiculo_link_lote": lote_data.get("link", "N/A"),
+                    "veiculo_imagem": lote_data.get("imagem", "N/A"),
+                    "veiculo_km": lote_data.get("km_veiculo", "N/A"),
+                    "veiculo_lance_inicial": lote_data.get("lance_inicial", "N/A"),
+                    "veiculo_valor_lance_atual": lote_data.get("valor_do_lance", "N/A"),
+                    "veiculo_data_leilao": lote_data.get("data_leilao", "N/A"),
+                    "veiculo_fabricante": lote_data.get("marca_veiculo", "N/A"),
+                    "veiculo_final_placa": lote_data.get("final_da_placa_veiculo", "N/A"),
+                    "veiculo_ano_fabricacao": lote_data.get("ano_fabricacao_veiculo", "N/A"),
+                    "veiculo_ano_modelo": lote_data.get("ano_modelo_veiculo", "N/A"),
+                    "veiculo_possui_chave": lote_data.get("chaves_veiculo", "N/A"),
+                    "veiculo_condicao_motor": lote_data.get("condicao_motor_veiculo", "N/A"),
+                    "veiculo_valor_fipe": lote_data.get("tabela_fipe_veiculo", "N/A"),
+                    "veiculo_tipo_combustivel": lote_data.get("combustivel_veiculo", "N/A"),
+                    "veiculo_tipo_retomada": lote_data.get("procedencia_veiculo", "N/A"),
+                    "veiculo_total_lances": lote_data.get("total_lances", "N/A"),
+                    "veiculo_modelo": lote_data.get("modelo_veiculo", "N/A"),
+                    "veiculo_tipo": lote_data.get("veiculo_tipo", "N/A"),
+                    "veiculo_patio_uf": lote_data.get("veiculo_patio_uf", "N/A"),
+                    "veiculo_valor_vendido": lote_data.get("veiculo_valor_vendido", "N/A"), # Nova coluna para o DB
                 }
-                # Adicionado: Imprime as colunas que estão sendo enviadas para o banco de dados
                 print(f"[INFO] Colunas enviadas para o DB para este lote: {list(transformed_data.keys())}")
                 try:
                     insert_data_parque_leiloes_oficial(conn, transformed_data)
@@ -396,7 +487,6 @@ finally:
             
             try:
                 conn.close()
-                print("[INFO] Conexão com o banco de dados fechada.")
             except Exception as e:
                 print(f"[ERRO] Erro ao fechar conexão com o banco de dados: {e}")
         else:
@@ -429,7 +519,10 @@ finally:
             "combustivel_veiculo",
             "procedencia_veiculo",
             "total_lances",
-            "modelo_veiculo"
+            "modelo_veiculo",
+            "veiculo_tipo",
+            "veiculo_patio_uf",
+            "veiculo_valor_vendido" # Nova coluna para o CSV
         ]
 
         # O dicionário 'dados' já está formatado com as chaves "DE", então

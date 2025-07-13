@@ -82,6 +82,266 @@ def safe_get_element_attribute(element, css_selector, attribute):
         print(f"DEBUG: Erro em safe_get_element_attribute para seletor '{css_selector}' e atributo '{attribute}': {e}")
         return "N/A"
 
+# --- Funções auxiliares para extração de detalhes (agora no escopo global) ---
+def get_detail_gt_sm_by_label(driver_obj, label_text):
+    try:
+        xpath = f"//div[contains(@class, 'gt-sm')]//span[contains(@class, 'label-categoria') and text()='{label_text}']/ancestor::div[contains(@class, 'col-md-4') or contains(@class, 'col-sm-6')]/a/span"
+        element = driver_obj.find_element(By.XPATH, xpath)
+        text = element.text.strip().replace('\xa0', ' ')
+        return text if text else "N/A"
+    except NoSuchElementException:
+        return "N/A"
+    except StaleElementReferenceException:
+        print(f"    ❗ StaleElementReferenceException ao buscar detalhe '{label_text}' em gt-sm. Ignorando.")
+        return "N/A"
+    except Exception as e:
+        print(f"    ❗ Erro inesperado ao buscar detalhe '{label_text}' em gt-sm: {e}")
+        return "N/A"
+
+""" def get_detail_lt_md_direct(driver_obj, css_selector):
+    try:
+        element = driver_obj.find_element(By.CSS_SELECTOR, css_selector)
+        text = element.text.strip().replace('\xa0', ' ')
+        return text if text else "N/A"
+    except NoSuchElementException:
+        return "N/A"
+    except StaleElementReferenceException:
+        try:
+            re_found_element = WebDriverWait(driver_obj, 1).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, css_selector))
+            )
+            text = re_found_element.text.strip().replace('\xa0', ' ')
+            return text if text else "N/A"
+        except (NoSuchElementException, TimeoutException, StaleElementReferenceException):
+            return "N/A"
+        except Exception as e:
+            print(f"DEBUG: Erro ao re-encontrar elemento direto lt-md: {e}")
+            return "N/A"
+    except Exception as e:
+        print(f"DEBUG: Erro ao buscar detalhe direto lt-md: {e}")
+        return "N/A" """
+
+# --- FUNÇÃO DE EXTRAÇÃO DE DETALHES (MOVIDA PARA O ESCOPO GLOBAL) ---
+def extract_lot_details(driver_instance, lot_data_list):
+    """
+    Navega para o link de cada lote e extrai informações detalhadas.
+    Atualiza a lista lot_data_list com os novos dados.
+    """
+    main_window_handle = driver_instance.current_window_handle
+    
+    # Cria uma cópia da lista de dados para iterar, pois vamos modificá-la
+    # As chaves aqui devem ser as mesmas usadas no dicionário 'dados' (minúsculas)
+    links_to_visit = [(index, item['veiculo_link_lote']) for index, item in enumerate(lot_data_list)] 
+
+    for index, link in links_to_visit:
+        if link != "N/A" and link:
+            print(f"\n🔄 Processando detalhes para o lote {index + 1} (Link: {link})...")
+            
+            # Inicializa as variáveis de detalhe para cada lote para garantir que existam
+            ano_veiculo = "N/A"
+            combustivel = "N/A"
+            km_veiculo = "N/A"
+            valor_mercado_fipe = "N/A"
+            cor_veiculo = "N/A"
+            veiculo_possui_chave = "N/A"
+            tipo_retomada = "N/A"
+            localizacao_detalhe = "N/A" 
+            tipo_veiculo = "N/A"
+            veiculo_versao = "N/A" # Inicializa a nova variável
+            # fabricante_veiculo e modelo_veiculo já vêm do título, mas são inicializados aqui para segurança
+            fabricante_veiculo = lot_data_list[index].get("veiculo_fabricante", "N/A")
+            modelo_veiculo = lot_data_list[index].get("veiculo_modelo", "N/A")
+
+            # --- Extração da versão do veículo a partir do modelo ---
+            if modelo_veiculo != "N/A" and " " in modelo_veiculo:
+                # Divide a string no primeiro espaço e pega o restante
+                veiculo_versao = modelo_veiculo.split(' ', 1)[1].strip()
+                # O modelo_veiculo agora será apenas a primeira parte
+                modelo_veiculo = modelo_veiculo.split(' ', 1)[0].strip()
+            else:
+                veiculo_versao = "N/A" # Se não houver espaço, não há versão específica
+
+            try:
+                # Open the link in a new tab
+                driver_instance.execute_script("window.open(arguments[0]);", link)
+                # Wait until a new tab is opened (2 tabs in total)
+                WebDriverWait(driver_instance, 10).until(EC.number_of_windows_to_be(2))
+                driver_instance.switch_to.window(driver_instance.window_handles[-1]) # Switch to the new tab
+                
+                # **REVISADO**: Espera por um contêiner mais geral e rola a página
+                # Espera que o contêiner principal de categorias esteja presente
+                detail_container = WebDriverWait(driver_instance, 25).until( # Aumentei o timeout para 25s
+                    EC.presence_of_element_located((By.CSS_SELECTOR, "div.categorias-veiculo"))
+                )
+                
+                # Rola para o final para garantir o carregamento de elementos dinâmicos (lazy loading)
+                driver_instance.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                time.sleep(2) # Pequena pausa para renderização após o scroll
+                
+                # Rola de volta para o topo (opcional, para consistência de visualização do Selenium)
+                driver_instance.execute_script("window.scrollTo(0, 0);")
+                time.sleep(2) # Pausa para o scroll se ajustar
+
+                # --- Tentativa de extração para gt-sm (prioritário) ---
+                print("    -> Tentando extrair detalhes do bloco gt-sm (layout desktop)...")
+                
+                ano_veiculo = get_detail_gt_sm_by_label(driver_instance, "Ano")
+                # Special parsing for Year if it's "YYYY/YYYY"
+                if ano_veiculo != "N/A" and "/" in ano_veiculo:
+                    ano_veiculo = ano_veiculo.split('/')[0].strip()
+
+                combustivel = get_detail_gt_sm_by_label(driver_instance, "Combustivel")
+                km_veiculo = get_detail_gt_sm_by_label(driver_instance, "Km")
+                
+                # --- Ajuste para extração de valor de mercado (FIPE) ---
+                valor_mercado_fipe_raw = get_detail_gt_sm_by_label(driver_instance, "Valor Mercado")
+                # Limpa a string para um formato numérico compatível com float (ex: "20000.00")
+                if valor_mercado_fipe_raw != "N/A":
+                    valor_mercado_fipe = valor_mercado_fipe_raw.replace('R$', '').replace('.', '').replace(',', '.').strip()
+                else:
+                    valor_mercado_fipe = "N/A" # Garante que se não encontrar, seja N/A
+                        
+                cor_veiculo = get_detail_gt_sm_by_label(driver_instance, "Cor")
+                veiculo_possui_chave = get_detail_gt_sm_by_label(driver_instance, "Possui Chave")
+                tipo_retomada = get_detail_gt_sm_by_label(driver_instance, "Tipo Retomada")
+                localizacao_detalhe = get_detail_gt_sm_by_label(driver_instance, "Localização") 
+                tipo_veiculo = get_detail_gt_sm_by_label(driver_instance, "Tipo")
+                
+                # Fabricante e Modelo não serão mais extraídos aqui, pois já vêm do título
+                # mas as variáveis são mantidas para o log e para o update final
+
+                # **NOVO**: Logs de debug para GT-SM
+                print(f"        DEBUG GT-SM - Ano: '{ano_veiculo}'")
+                print(f"        DEBUG GT-SM - Combustivel: '{combustivel}'")
+                print(f"        DEBUG GT-SM - KM: '{km_veiculo}'")
+                print(f"        DEBUG GT-SM - Valor Mercado: '{valor_mercado_fipe}'")
+                print(f"        DEBUG GT-SM - Cor: '{cor_veiculo}'")
+                print(f"        DEBUG GT-SM - Possui Chave: '{veiculo_possui_chave}'")
+                print(f"        DEBUG GT-SM - Tipo Retomada: '{tipo_retomada}'")
+                print(f"        DEBUG GT-SM - Localização: '{localizacao_detalhe}'")
+                print(f"        DEBUG GT-SM - Tipo: '{tipo_veiculo}'")
+
+
+                # --- Fallback para lt-md se gt-sm falhou para os campos principais ---
+                # Check if ANY of the primary fields from GT-SM are still N/A
+                if (ano_veiculo == "N/A" or combustivel == "N/A" or km_veiculo == "N/A" or
+                    valor_mercado_fipe == "N/A" or cor_veiculo == "N/A" or veiculo_possui_chave == "N/A" or
+                    tipo_retomada == "N/A" or localizacao_detalhe == "N/A" or tipo_veiculo == "N/A"):
+
+                    print("    -> GT-SM não forneceu todos os detalhes. Tentando extrair detalhes do bloco lt-md (layout mobile)...")
+                    
+                    # LT-MD has a different structure for Year, Fuel, KM (direct p.text-categoria)
+                    temp_ano = get_detail_lt_md_direct(driver_instance, "div.lt-md div.row.q-col-gutter-sm.text-center.q-pb-sm div.col-4:nth-child(1) p.text-categoria")
+                    if temp_ano != "N/A":
+                        if "/" in temp_ano:
+                            ano_veiculo = temp_ano.split('/')[0].strip()
+                        else:
+                            ano_veiculo = temp_ano.strip()
+
+                    temp_combustivel = get_detail_lt_md_direct(driver_instance, "div.lt-md div.row.q-col-gutter-sm.text-center.q-pb-sm div.col-4:nth-child(2) p.text-categoria")
+                    if temp_combustivel != "N/A":
+                        combustivel = temp_combustivel
+                    
+                    temp_km = get_detail_lt_md_direct(driver_instance, "div.lt-md div.row.q-col-gutter-sm.text-center.q-pb-sm div.col-4:nth-child(3) p.text-categoria")
+                    if temp_km != "N/A":
+                        km_veiculo = temp_km
+
+                    # --- Ajustes para LT-MD com base no HTML fornecido ---
+                    # Valor Mercado (FIPE)
+                    if valor_mercado_fipe == "N/A": # Só tenta novamente se ainda for N/A
+                        temp_valor_mercado = get_detail_lt_md_direct(driver_instance, "div.lt-md div.btn-rounded-custom > div.row.q-col-gutter-sm.text-center:nth-of-type(2) div.col-4:nth-child(1) p.text-categoria")
+                        if temp_valor_mercado != "N/A":
+                            valor_mercado_fipe = temp_valor_mercado.replace('R$', '').replace('.', '').replace(',', '.').strip()
+
+                    # Cor
+                    if cor_veiculo == "N/A":
+                        temp_cor = get_detail_lt_md_direct(driver_instance, "div.lt-md div.btn-rounded-custom > div.row.q-col-gutter-sm.text-center:nth-of-type(2) div.col-4:nth-child(2) p.text-categoria")
+                        if temp_cor != "N/A":
+                            cor_veiculo = temp_cor
+
+                    # Possui Chave
+                    if veiculo_possui_chave == "N/A":
+                        temp_chave = get_detail_lt_md_direct(driver_instance, "div.lt-md div.btn-rounded-custom > div.row.q-col-gutter-sm.text-center:nth-of-type(2) div.col-4:nth-child(3) p.text-categoria")
+                        if temp_chave != "N/A":
+                            veiculo_possui_chave = temp_chave
+
+                    # Tipo Retomada
+                    if tipo_retomada == "N/A":
+                        # O seletor original para tipo_retomada no lt-md estava correto
+                        tipo_retomada = get_detail_lt_md_direct(driver_instance, "div.lt-md div.row.q-col-gutter-md div.col-md-4:nth-child(1) a.text-categoria > span")
+                    
+                    # Localização (mantido o seletor original, pois parece estar correto)
+                    if localizacao_detalhe == "N/A":
+                        temp_location_ltmd = get_detail_lt_md_direct(driver_instance, "div.lt-md div.row.q-col-gutter-md div.col-md-4:nth-child(2) a.text-categoria > span > p")
+                        if temp_location_ltmd != "N/A":
+                            localizacao_detalhe = temp_location_ltmd
+                        else: # Fallback if there's no <p> inside <span>
+                            localizacao_detalhe = get_detail_lt_md_direct(driver_instance, "div.lt-md div.row.q-col-gutter-md div.col-md-4:nth-child(2) a.text-categoria > span")
+                    
+                    # Tipo Veículo (mantido o seletor original, pois parece estar correto)
+                    if tipo_veiculo == "N/A":
+                        tipo_veiculo = get_detail_lt_md_direct(driver_instance, "div.lt-md div.row.q-col-gutter-md div.col-md-4:nth-child(3) a.text-categoria > span")
+                    
+                    # Fabricante e Modelo não serão extraídos aqui, pois já vêm do título
+
+                    # **NOVO**: Logs de debug para LT-MD FALLBACK
+                    print(f"        DEBUG LT-MD FALLBACK - Ano: '{ano_veiculo}'")
+                    print(f"        DEBUG LT-MD FALLBACK - Combustivel: '{combustivel}'")
+                    print(f"        DEBUG LT-MD FALLBACK - KM: '{km_veiculo}'")
+                    print(f"        DEBUG LT-MD FALLBACK - Valor Mercado: '{valor_mercado_fipe}'")
+                    print(f"        DEBUG LT-MD FALLBACK - Cor: '{cor_veiculo}'")
+                    print(f"        DEBUG LT-MD FALLBACK - Possui Chave: '{veiculo_possui_chave}'")
+                    print(f"        DEBUG LT-MD FALLBACK - Tipo Retomada: '{tipo_retomada}'")
+                    print(f"        DEBUG LT-MD FALLBACK - Localização: '{localizacao_detalhe}'")
+                    print(f"        DEBUG LT-MD FALLBACK - Tipo: '{tipo_veiculo}'")
+
+
+                print(f"    ✔️ Detalhes extraídos para {link}.")
+                print(f"    -> Ano Fabricação: {ano_veiculo}")
+                print(f"    -> Combustível: {combustivel}")
+                print(f"    -> KM Detalhe: {km_veiculo}")
+                print(f"    -> Valor Mercado (FIPE): {valor_mercado_fipe}")
+                print(f"    -> Cor: {cor_veiculo}")
+                print(f"    -> Possui Chave: {veiculo_possui_chave}")
+                print(f"    -> Tipo Retomada: {tipo_retomada}")
+                print(f"    -> Localização Detalhe: {localizacao_detalhe}")
+                print(f"    -> Tipo Veículo Detalhe: {tipo_veiculo}")
+                print(f"    -> Fabricante: {fabricante_veiculo}") # Valor do título
+                print(f"    -> Modelo: {modelo_veiculo}") # Valor do título
+                print(f"    -> Versão: {veiculo_versao}") # Novo campo
+
+            except TimeoutException:
+                print(f"    ⚠️ Timeout ao carregar detalhes do lote em {link}. Informações adicionais podem estar incompletas ou a página não carregou corretamente.")
+            except Exception as e:
+                print(f"    ❌ ERRO geral ao extrair detalhes da página {link}: {e}")
+            
+            finally:
+                # Fecha a aba do lote e volta para a aba principal
+                driver_instance.close()
+                driver_instance.switch_to.window(main_window_handle)
+                print(f"    ⬅️ Voltando para a página principal.")
+        else:
+            print(f"    ❗ Link não disponível para o lote {index + 1}. Pulando extração de detalhes.")
+        
+        # Atualiza o dicionário correspondente na lista `dados`
+        if index < len(lot_data_list):
+            lot_data_list[index].update({
+                "veiculo_ano_fabricacao": ano_veiculo, 
+                "veiculo_tipo_combustivel": combustivel,
+                "veiculo_km": km_veiculo, 
+                "veiculo_valor_fipe": valor_mercado_fipe, 
+                "veiculo_cor": cor_veiculo,
+                "veiculo_possui_chave": veiculo_possui_chave,
+                "veiculo_tipo_retomada": tipo_retomada,
+                "veiculo_patio_uf": localizacao_detalhe, # Atualizado para receber localizacao_detalhe
+                "veiculo_tipo": tipo_veiculo,
+                "veiculo_fabricante": fabricante_veiculo, 
+                "veiculo_modelo": modelo_veiculo,
+                "veiculo_versao": veiculo_versao # Adicionado o novo campo
+            })
+        else:
+            print(f"[ERROR] Índice {index} fora dos limites para atualizar dados.")
+
 # Configura opções do Chrome
 options = Options()
 # options.add_argument("--headless")    # Descomente para rodar sem interface gráfica (modo headless)
@@ -171,6 +431,30 @@ try:
 
         # Extração de dados dos lotes da página atual
         for i, lote in enumerate(lotes, start=1):
+            # Inicializa todas as variáveis que serão usadas no dicionário 'dados'
+            # para garantir que estejam sempre definidas, mesmo em caso de falha na extração.
+            titulo = "N/A"
+            link = "N/A"
+            imagem = "N/A"
+            uf = "N/A" # Será sobrescrito por localizacao_detalhe se encontrado
+            ano = "N/A"
+            km = "N/A"
+            valor_lance_atual = "N/A" 
+            situacao = "N/A"
+            data_leilao_str = "N/A"
+            
+            # Variáveis para detalhes que serão preenchidos depois, mas inicializadas aqui para consistência
+            veiculo_tipo_combustivel = "N/A"
+            veiculo_cor = "N/A"
+            veiculo_possui_chave = "N/A"
+            veiculo_tipo_retomada = "N/A"
+            veiculo_tipo = "N/A"
+            veiculo_valor_fipe = "N/A"
+            veiculo_modelo = "N/A"
+            veiculo_fabricante = "N/A"
+            veiculo_versao = "N/A" # Inicializa a nova variável aqui também
+            localizacao_detalhe = "N/A" # Inicializa a variável de detalhe de localização
+
             try:
                 # Re-locate the lot element to avoid StaleElementReferenceException for the lot cards
                 # This is important if the page reloads or elements shift during pagination
@@ -179,6 +463,17 @@ try:
                 print(f"🔍 Extraindo dados básicos do Lote {i} na Página {current_page}:")
 
                 titulo = safe_get_element_text(lote_element_on_page, "div.header-card h3")
+                
+                # --- Extração de Fabricante e Modelo do Título ---
+                if titulo != "N/A" and "/" in titulo:
+                    parts = titulo.split('/', 1) # Split only on the first '/'
+                    veiculo_fabricante = parts[0].strip()
+                    veiculo_modelo = parts[1].strip()
+                else:
+                    veiculo_fabricante = titulo # If no '/', the whole title is the manufacturer
+                    veiculo_modelo = "N/A" # No specific model found
+                # --- Fim da Extração de Fabricante e Modelo ---
+
                 link = safe_get_element_attribute(lote_element_on_page, "a.img-card", "href")
                 if link == "N/A":
                     link = safe_get_element_attribute(lote_element_on_page, "div.header-card a", "href")
@@ -191,24 +486,26 @@ try:
                     if match:
                         imagem = match.group(1)
                 
-                # Extração da UF
+                # Extração da UF (inicial, será sobrescrita por localização detalhada)
                 uf = safe_get_element_text(lote_element_on_page, "div.codigo-anuncio span")
-                # print(f"    - UF: {uf}") # Comentado para reduzir logs detalhados aqui
 
                 ano_raw = safe_get_element_text(lote_element_on_page, "p.text-ano")
                 ano = "N/A"
                 if ano_raw != "N/A":
-                    # Tenta extrair 4 dígitos para o ano (ex: 2010)
                     match_ano = re.search(r'\d{4}', ano_raw)
                     if match_ano:
                         ano = match_ano.group(0)
-                    else: # Se não encontrar 4 dígitos, tenta 2 (ex: '10' para 2010)
-                            match_ano = re.search(r'\d{2}', ano_raw)
-                            if match_ano:
-                                ano = "20" + match_ano.group(0)
+                    else: 
+                        match_ano = re.search(r'\d{2}', ano_raw)
+                        if match_ano:
+                            ano = "20" + match_ano.group(0)
                 
-                km = safe_get_element_text(lote_element_on_page, "p.text-km")
-                valor = safe_get_element_text(lote_element_on_page, "li.valor-atual")
+                km = safe_get_element_text(lote_element_on_page, "p.text-km") 
+                valor_lance_atual_raw = safe_get_element_text(lote_element_on_page, "li.valor-atual")
+                if valor_lance_atual_raw != "N/A":
+                    valor_lance_atual = valor_lance_atual_raw.replace('R$', '').replace('.', '').replace(',', '.').strip()
+
+
                 situacao = "N/A"
                 tempo_restante_span = safe_get_element_text(lote_element_on_page, "a.tempo-restante div > div span.text-weight-medium")
                 if tempo_restante_span != "N/A" and tempo_restante_span.strip() != "":
@@ -233,22 +530,22 @@ try:
                     "veiculo_titulo": titulo,
                     "veiculo_link_lote": link,
                     "veiculo_imagem": imagem,
-                    "veiculo_patio_uf": uf,
+                    "veiculo_patio_uf": uf, # Este será atualizado com localizacao_detalhe
                     "veiculo_ano_fabricacao": ano,
                     "veiculo_km": km,
-                    "veiculo_valor_lance_atual": valor,
+                    "veiculo_valor_lance_atual": valor_lance_atual, 
                     "veiculo_situacao": situacao,
                     "veiculo_data_leilao": data_leilao_str,
                     # Adicionar placeholders para os campos de detalhe que serão preenchidos depois
-                    "veiculo_tipo_combustivel": "N/A",
-                    "veiculo_cor": "N/A",
-                    "veiculo_possui_chave": "N/A",
-                    "veiculo_tipo_retomada": "N/A",
-                    "veiculo_tipo": "N/A",
-                    "veiculo_valor_fipe": "N/A",
-                    "veiculo_modelo": "N/A", # Será preenchido ou permanecerá N/A
-                    "veiculo_fabricante": "N/A", # Será preenchido ou permanecerá N/A
-                    "veiculo_patio_uf_localizacao": "N/A" # Para a localização mais detalhada, se houver
+                    "veiculo_tipo_combustivel": veiculo_tipo_combustivel, 
+                    "veiculo_cor": veiculo_cor, 
+                    "veiculo_possui_chave": veiculo_possui_chave, 
+                    "veiculo_tipo_retomada": veiculo_tipo_retomada, 
+                    "veiculo_tipo": veiculo_tipo, 
+                    "veiculo_valor_fipe": veiculo_valor_fipe, 
+                    "veiculo_modelo": veiculo_modelo, 
+                    "veiculo_fabricante": veiculo_fabricante,
+                    "veiculo_versao": veiculo_versao # Adicionado o novo campo
                 })
             except StaleElementReferenceException:
                 print(f"[WARN] StaleElementReferenceException no Lote {i} da Página {current_page}. Re-localizando lotes e tentando novamente esta página.")
@@ -313,222 +610,11 @@ try:
             print("[INFO] Última página alcançada. Fim da paginação.")
             break 
 
-    # --- INÍCIO DA NOVA FUNCIONALIDADE: BUSCA DE DETALHES PÓS-PAGINAÇÃO ---
+    # --- CHAMADA PARA A FUNÇÃO DE EXTRAÇÃO DE DETALHES ---
     print("\n--- INICIANDO EXTRAÇÃO DE DETALHES DE CADA LOTE ---")
-
-    def extract_lot_details(driver_instance, lot_data_list):
-        """
-        Navega para o link de cada lote e extrai informações detalhadas.
-        Atualiza a lista lot_data_list com os novos dados.
-        """
-        main_window_handle = driver_instance.current_window_handle
-        
-        # Cria uma cópia da lista de dados para iterar, pois vamos modificá-la
-        # As chaves aqui devem ser as mesmas usadas no dicionário 'dados' (minúsculas)
-        links_to_visit = [(index, item['veiculo_link_lote']) for index, item in enumerate(lot_data_list)] 
-
-        for index, link in links_to_visit:
-            if link != "N/A" and link:
-                print(f"\n🔄 Processando detalhes para o lote {index + 1} (Link: {link})...")
-                
-                # Inicializa as variáveis de detalhe para cada lote para garantir que existam
-                ano_veiculo = "N/A"
-                combustivel = "N/A"
-                km_veiculo = "N/A"
-                valor_mercado_fipe = "N/A"
-                cor_veiculo = "N/A"
-                veiculo_possui_chave = "N/A"
-                tipo_retomada = "N/A"
-                localizacao_detalhe = "N/A" 
-                tipo_veiculo = "N/A"
-                fabricante_veiculo = "N/A" 
-                modelo_veiculo = "N/A" 
+    extract_lot_details(driver, dados)
 
 
-                try:
-                    # Open the link in a new tab
-                    driver_instance.execute_script("window.open(arguments[0]);", link)
-                    # Wait until a new tab is opened (2 tabs in total)
-                    WebDriverWait(driver_instance, 10).until(EC.number_of_windows_to_be(2))
-                    driver_instance.switch_to.window(driver_instance.window_handles[-1]) # Switch to the new tab
-                    
-                    # Espera por um elemento específico da página de detalhes para garantir que carregou
-                    # e faz um scroll para que o Selenium foque na área de dados.
-                    detail_container = WebDriverWait(driver_instance, 20).until( # Increased timeout
-                        EC.presence_of_element_located((By.CSS_SELECTOR, "div.categorias-veiculo"))
-                    )
-                    driver_instance.execute_script("arguments[0].scrollIntoView(true);", detail_container)
-                    time.sleep(3) # Aumentei a pausa após o scroll para garantir o carregamento dinâmico
-
-                    # Function to get detail by label using XPath for GT-SM structure
-                    def get_detail_gt_sm_by_label(driver_obj, label_text):
-                        try:
-                            # The value is inside a <span> within an <a>, which is a sibling of a <div>
-                            # containing the label <span>.
-                            xpath = f"//div[contains(@class, 'gt-sm')]//span[contains(@class, 'label-categoria') and text()='{label_text}']/ancestor::div[contains(@class, 'col-md-4') or contains(@class, 'col-sm-6')]/a/span"
-                            element = driver_obj.find_element(By.XPATH, xpath)
-                            text = element.text.strip().replace('\xa0', ' ')
-                            return text if text else "N/A"
-                        except NoSuchElementException:
-                            return "N/A"
-                        except StaleElementReferenceException:
-                            print(f"    ❗ StaleElementReferenceException ao buscar detalhe '{label_text}' em gt-sm. Ignorando.")
-                            return "N/A"
-                        except Exception as e:
-                            print(f"    ❗ Erro inesperado ao buscar detalhe '{label_text}' em gt-sm: {e}")
-                            return "N/A"
-
-                    # Function to get detail by direct CSS selector for LT-MD structure
-                    def get_detail_lt_md_direct(driver_obj, css_selector):
-                        try:
-                            element = driver_obj.find_element(By.CSS_SELECTOR, css_selector)
-                            text = element.text.strip().replace('\xa0', ' ')
-                            return text if text else "N/A"
-                        except NoSuchElementException:
-                            return "N/A"
-                        except StaleElementReferenceException:
-                            # Try to re-find if stale
-                            try:
-                                re_found_element = WebDriverWait(driver_obj, 1).until(
-                                    EC.presence_of_element_located((By.CSS_SELECTOR, css_selector))
-                                )
-                                text = re_found_element.text.strip().replace('\xa0', ' ')
-                                return text if text else "N/A"
-                            except (NoSuchElementException, TimeoutException, StaleElementReferenceException):
-                                return "N/A"
-                            except Exception as e:
-                                print(f"DEBUG: Erro ao re-encontrar elemento direto lt-md: {e}")
-                                return "N/A"
-                        except Exception as e:
-                            print(f"DEBUG: Erro ao buscar detalhe direto lt-md: {e}")
-                            return "N/A"
-
-                    # --- Tentativa de extração para gt-sm (prioritário) ---
-                    print("    -> Tentando extrair detalhes do bloco gt-sm (layout desktop)...")
-                    
-                    ano_veiculo = get_detail_gt_sm_by_label(driver_instance, "Ano")
-                    # Special parsing for Year if it's "YYYY/YYYY"
-                    if ano_veiculo != "N/A" and "/" in ano_veiculo:
-                        ano_veiculo = ano_veiculo.split('/')[0].strip()
-
-                    combustivel = get_detail_gt_sm_by_label(driver_instance, "Combustivel")
-                    km_veiculo = get_detail_gt_sm_by_label(driver_instance, "Km")
-                    valor_mercado_fipe = get_detail_gt_sm_by_label(driver_instance, "Valor Mercado")
-                    if valor_mercado_fipe != "N/A":
-                        valor_mercado_fipe = valor_mercado_fipe.replace('R$', '').strip()
-                        
-                    cor_veiculo = get_detail_gt_sm_by_label(driver_instance, "Cor")
-                    veiculo_possui_chave = get_detail_gt_sm_by_label(driver_instance, "Possui Chave")
-                    tipo_retomada = get_detail_gt_sm_by_label(driver_instance, "Tipo Retomada")
-                    localizacao_detalhe = get_detail_gt_sm_by_label(driver_instance, "Localização") 
-                    tipo_veiculo = get_detail_gt_sm_by_label(driver_instance, "Tipo")
-                    fabricante_veiculo = get_detail_gt_sm_by_label(driver_instance, "Fabricante") 
-                    modelo_veiculo = get_detail_gt_sm_by_label(driver_instance, "Modelo") 
-
-                    # --- Fallback para lt-md se gt-sm falhou para os campos principais ---
-                    # Check if ANY of the primary fields from GT-SM are still N/A
-                    if (ano_veiculo == "N/A" or combustivel == "N/A" or km_veiculo == "N/A" or
-                        valor_mercado_fipe == "N/A" or cor_veiculo == "N/A" or veiculo_possui_chave == "N/A" or
-                        tipo_retomada == "N/A" or localizacao_detalhe == "N/A" or tipo_veiculo == "N/A" or
-                        fabricante_veiculo == "N/A" or modelo_veiculo == "N/A"):
-
-                        print("    -> GT-SM não forneceu todos os detalhes. Tentando extrair detalhes do bloco lt-md (layout mobile)...")
-                        
-                        # LT-MD has a different structure for Year, Fuel, KM (direct p.text-categoria)
-                        temp_ano = get_detail_lt_md_direct(driver_instance, "div.lt-md div.row.q-col-gutter-sm.text-center.q-pb-sm div.col-4:nth-child(1) p.text-categoria")
-                        if temp_ano != "N/A":
-                            if "/" in temp_ano:
-                                ano_veiculo = temp_ano.split('/')[0].strip()
-                            else:
-                                ano_veiculo = temp_ano.strip()
-
-                        temp_combustivel = get_detail_lt_md_direct(driver_instance, "div.lt-md div.row.q-col-gutter-sm.text-center.q-pb-sm div.col-4:nth-child(2) p.text-categoria")
-                        if temp_combustivel != "N/A":
-                            combustivel = temp_combustivel
-                        
-                        temp_km = get_detail_lt_md_direct(driver_instance, "div.lt-md div.row.q-col-gutter-sm.text-center.q-pb-sm div.col-4:nth-child(3) p.text-categoria")
-                        if temp_km != "N/A":
-                            km_veiculo = temp_km
-
-                        # For other fields, LT-MD might use the `label-categoria` span + p.text-categoria pattern
-                        if valor_mercado_fipe == "N/A":
-                            temp_valor_mercado = get_detail_lt_md_direct(driver_instance, "div.lt-md div.row.q-col-gutter-sm.text-center div.col-4:nth-child(1) p.text-categoria")
-                            if temp_valor_mercado != "N/A":
-                                valor_mercado_fipe = temp_valor_mercado.replace('R$', '').strip()
-
-                        if cor_veiculo == "N/A":
-                            temp_cor = get_detail_lt_md_direct(driver_instance, "div.lt-md div.row.q-col-gutter-sm.text-center div.col-4:nth-child(2) p.text-categoria")
-                            if temp_cor != "N/A":
-                                cor_veiculo = temp_cor
-
-                        if veiculo_possui_chave == "N/A":
-                            temp_chave = get_detail_lt_md_direct(driver_instance, "div.lt-md div.row.q-col-gutter-sm.text-center div.col-4:nth-child(3) p.text-categoria")
-                            if temp_chave != "N/A":
-                                veiculo_possui_chave = temp_chave
-
-                        # For Tipo Retomada, Localização, Tipo Veículo, LT-MD has a different structure:
-                        # <div> with label-categoria then <a>/<span>
-                        if tipo_retomada == "N/A":
-                            tipo_retomada = get_detail_lt_md_direct(driver_instance, "div.lt-md div.row.q-col-gutter-md div.col-md-4:nth-child(1) a.text-categoria > span")
-                        if localizacao_detalhe == "N/A":
-                            temp_location_ltmd = get_detail_lt_md_direct(driver_instance, "div.lt-md div.row.q-col-gutter-md div.col-md-4:nth-child(2) a.text-categoria > span > p")
-                            if temp_location_ltmd != "N/A":
-                                localizacao_detalhe = temp_location_ltmd
-                            else: # Fallback if there's no <p> inside <span>
-                                localizacao_detalhe = get_detail_lt_md_direct(driver_instance, "div.lt-md div.row.q-col-gutter-md div.col-md-4:nth-child(2) a.text-categoria > span")
-                        if tipo_veiculo == "N/A":
-                            tipo_veiculo = get_detail_lt_md_direct(driver_instance, "div.lt-md div.row.q-col-gutter-md div.col-md-4:nth-child(3) a.text-categoria > span")
-                        if fabricante_veiculo == "N/A":
-                               # Tentar encontrar um seletor específico para fabricante no layout mobile
-                            fabricante_veiculo = get_detail_lt_md_direct(driver_instance, "div.lt-md div.q-col-gutter-sm.text-center.q-pb-sm div.col-4:nth-child(4) p.text-categoria") # Exemplo, ajuste se necessário
-                        if modelo_veiculo == "N/A":
-                            # Tentar encontrar um seletor específico para modelo no layout mobile
-                            modelo_veiculo = get_detail_lt_md_direct(driver_instance, "div.lt-md div.q-col-gutter-sm.text-center.q-pb-sm div.col-4:nth-child(5) p.text-categoria") # Exemplo, ajuste se necessário
-
-
-                    print(f"    ✔️ Detalhes extraídos para {link}.")
-                    print(f"    -> Ano Fabricação: {ano_veiculo}")
-                    print(f"    -> Combustível: {combustivel}")
-                    print(f"    -> KM Detalhe: {km_veiculo}")
-                    print(f"    -> Valor Mercado (FIPE): {valor_mercado_fipe}")
-                    print(f"    -> Cor: {cor_veiculo}")
-                    print(f"    -> Possui Chave: {veiculo_possui_chave}")
-                    print(f"    -> Tipo Retomada: {tipo_retomada}")
-                    print(f"    -> Localização Detalhe: {localizacao_detalhe}")
-                    print(f"    -> Tipo Veículo Detalhe: {tipo_veiculo}")
-                    print(f"    -> Fabricante: {fabricante_veiculo}")
-                    print(f"    -> Modelo: {modelo_veiculo}")
-
-                except TimeoutException:
-                    print(f"    ⚠️ Timeout ao carregar detalhes do lote em {link}. Informações adicionais podem estar incompletas ou a página não carregou corretamente.")
-                except Exception as e:
-                    print(f"    ❌ ERRO geral ao extrair detalhes da página {link}: {e}")
-                
-                finally:
-                    # Fecha a aba do lote e volta para a aba principal
-                    driver_instance.close()
-                    driver_instance.switch_to.window(main_window_handle)
-                    print(f"    ⬅️ Voltando para a página principal.")
-            else:
-                print(f"    ❗ Link não disponível para o lote {index + 1}. Pulando extração de detalhes.")
-            
-            # Atualiza o dicionário correspondente na lista `dados`
-            if index < len(lot_data_list):
-                lot_data_list[index].update({
-                    "veiculo_ano_fabricacao": ano_veiculo, # Atualiza com o valor detalhado
-                    "veiculo_tipo_combustivel": combustivel,
-                    "veiculo_km": km_veiculo, # Atualiza com o valor detalhado
-                    "veiculo_valor_fipe": valor_mercado_fipe,
-                    "veiculo_cor": cor_veiculo,
-                    "veiculo_possui_chave": veiculo_possui_chave,
-                    "veiculo_tipo_retomada": tipo_retomada,
-                    "veiculo_patio_uf_localizacao": localizacao_detalhe, # Usando novo nome de campo
-                    "veiculo_tipo": tipo_veiculo,
-                    "veiculo_fabricante": fabricante_veiculo, # Preenche o campo
-                    "veiculo_modelo": modelo_veiculo # Preenche o campo
-                })
-            else:
-                print(f"[ERROR] Índice {index} fora dos limites para atualizar dados.")
 finally:
     # --- Conexão e Inserção no PostgreSQL (para a tabela 'leilo') ---
     if dados:
@@ -550,32 +636,10 @@ finally:
             create_leilo_table(conn) 
             print("[INFO] Iniciando inserção de dados na tabela 'Leilo'...")
             for lote_data in dados:
-                # Mapear as chaves do dicionário `lote_data` (que estão no padrão "DE", agora minúsculas)
-                # para as chaves esperadas pela função `insert_data_leilo` (também minúsculas).
-                transformed_data = {
-                    "veiculo_titulo": lote_data.get("veiculo_titulo", "N/A"),
-                    "veiculo_link_lote": lote_data.get("veiculo_link_lote", "N/A"),
-                    "veiculo_imagem": lote_data.get("veiculo_imagem", "N/A"),
-                    "veiculo_patio_uf": lote_data.get("veiculo_patio_uf", "N/A"),
-                    "veiculo_ano_fabricacao": lote_data.get("veiculo_ano_fabricacao", "N/A"),
-                    "veiculo_km": lote_data.get("veiculo_km", "N/A"),
-                    "veiculo_valor_lance_atual": lote_data.get("veiculo_valor_lance_atual", "N/A"),
-                    "veiculo_situacao": lote_data.get("veiculo_situacao", "N/A"),
-                    "veiculo_data_leilao": lote_data.get("veiculo_data_leilao", "N/A"),
-                    "veiculo_tipo_combustivel": lote_data.get("veiculo_tipo_combustivel", "N/A"),
-                    "veiculo_cor": lote_data.get("veiculo_cor", "N/A"),
-                    "veiculo_possui_chave": lote_data.get("veiculo_possui_chave", "N/A"),
-                    "veiculo_tipo_retomada": lote_data.get("veiculo_tipo_retomada", "N/A"),
-                    "veiculo_tipo": lote_data.get("veiculo_tipo", "N/A"),
-                    "veiculo_valor_fipe": lote_data.get("veiculo_valor_fipe", "N/A"),
-                    "veiculo_fabricante": lote_data.get("veiculo_fabricante", "N/A"),
-                    "veiculo_modelo": lote_data.get("veiculo_modelo", "N/A"),
-                    "veiculo_patio_uf_localizacao": lote_data.get("veiculo_patio_uf_localizacao", "N/A"),
-                }
                 # Adicionado: Imprime as colunas que estão sendo enviadas para o banco de dados
-                print(f"[INFO] Colunas enviadas para o DB para este lote: {list(transformed_data.keys())}")
+                print(f"[INFO] Colunas enviadas para o DB para este lote: {list(lote_data.keys())}")
                 try:
-                    insert_data_leilo(conn, transformed_data)
+                    insert_data_leilo(conn, lote_data) # Passando lote_data diretamente
                 except Exception as e:
                     print(f"[ERRO] Erro ao inserir registro no banco: {lote_data.get('veiculo_titulo', 'N/A')[:50]}... Erro: {e}")
             print(f"[INFO] {len(dados)} registros processados para inserção na tabela 'Leilo'.")
@@ -602,7 +666,7 @@ finally:
             "veiculo_titulo",
             "veiculo_link_lote",
             "veiculo_imagem",
-            "veiculo_patio_uf",
+            "veiculo_patio_uf", # Agora representa a localização detalhada
             "veiculo_ano_fabricacao",
             "veiculo_km",
             "veiculo_valor_lance_atual",
@@ -616,7 +680,7 @@ finally:
             "veiculo_valor_fipe",
             "veiculo_fabricante",
             "veiculo_modelo",
-            "veiculo_patio_uf_localizacao"
+            "veiculo_versao", # Adicionado o novo campo
         ]
 
         # O dicionário 'dados' já está formatado com as chaves "DE", então

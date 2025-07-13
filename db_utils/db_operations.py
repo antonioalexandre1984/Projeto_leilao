@@ -40,24 +40,27 @@ def create_parque_leiloes_oficial_table(conn):
         create_table_query = sql.SQL("""
             CREATE TABLE IF NOT EXISTS {} (
                 id SERIAL PRIMARY KEY,
-                veiculo_titulo VARCHAR(500),
                 veiculo_link_lote TEXT,
-                veiculo_imagem TEXT,
-                veiculo_km NUMERIC(15, 2),
-                veiculo_lance_inicial NUMERIC(15, 2),
-                veiculo_valor_lance_atual NUMERIC(15, 2),
-                veiculo_data_leilao VARCHAR(100),
+                veiculo_titulo VARCHAR(500),
                 veiculo_fabricante VARCHAR(255),
-                veiculo_final_placa VARCHAR(50),
-                veiculo_ano_fabricacao INTEGER,
+                veiculo_modelo VARCHAR(255),       
+                veiculo_ano_fabricacao INTEGER,         
                 veiculo_ano_modelo INTEGER,
+                veiculo_valor_fipe NUMERIC,              
                 veiculo_possui_chave VARCHAR(100),
                 veiculo_condicao_motor VARCHAR(100),
-                veiculo_valor_fipe NUMERIC(15, 2),
                 veiculo_tipo_combustivel VARCHAR(100),
-                veiculo_tipo_retomada VARCHAR(100),
+                veiculo_km NUMERIC,                     
                 veiculo_total_lances INTEGER,
-                veiculo_modelo VARCHAR(255),
+                veiculo_data_leilao VARCHAR(100),
+                veiculo_imagem TEXT,
+                veiculo_lance_inicial NUMERIC,
+                veiculo_valor_lance_atual NUMERIC,
+                veiculo_final_placa VARCHAR(50),
+                veiculo_tipo_retomada VARCHAR(100),
+                veiculo_tipo VARCHAR(100),
+                veiculo_valor_vendido NUMERIC,
+                veiculo_patio_uf VARCHAR (100),          
                 data_extracao TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """).format(sql.Identifier(table_name))
@@ -104,8 +107,11 @@ def insert_data_parque_leiloes_oficial(conn, data_row_dict):
             "veiculo_valor_fipe",
             "veiculo_tipo_combustivel",
             "veiculo_tipo_retomada",
+            "veiculo_tipo",
             "veiculo_total_lances",
-            "veiculo_modelo"
+            "veiculo_modelo",
+            "veiculo_valor_vendido",
+            "veiculo_patio_uf"
         ]
         
         print(f"[DB DEBUG] Colunas para inserção na tabela '{table_name}': {columns_to_insert}")
@@ -128,19 +134,27 @@ def insert_data_parque_leiloes_oficial(conn, data_row_dict):
         for col_name in columns_to_insert:
             val = data_row_dict.get(col_name)
 
-            if col_name in ["veiculo_lance_inicial", "veiculo_valor_lance_atual", "veiculo_valor_fipe", "veiculo_km"]:
+            if col_name in ["veiculo_lance_inicial", "veiculo_valor_lance_atual", "veiculo_valor_fipe", "veiculo_valor_vendido", "veiculo_km"]:
                 try:
-                    cleaned_val = str(val).replace('R$', '').replace('.', '').replace(',', '.').strip()
-                    values_to_insert.append(float(cleaned_val) if cleaned_val and cleaned_val != "N/A" else None)
+                    if isinstance(val, (int, float)):
+                        values_to_insert.append(float(val))
+                    else:
+                        s_val = str(val).replace('R$', '').strip()
+                        s_val = s_val.replace('.', '') 
+                        s_val = s_val.replace(',', '.') 
+                        values_to_insert.append(float(s_val) if s_val and s_val.lower() != "n/a" else None)
                 except (ValueError, TypeError):
+                    print(f"[DB ERROR] Falha ao converter valor '{val}' para numérico na coluna '{col_name}'. Definindo como None.")
                     values_to_insert.append(None)
             elif col_name in ["veiculo_total_lances", "veiculo_ano_fabricacao", "veiculo_ano_modelo"]:
                 try:
-                    values_to_insert.append(int(val) if str(val).isdigit() and str(val) != "N/A" else None)
+                    numeric_val = re.sub(r'\D', '', str(val))
+                    values_to_insert.append(int(numeric_val) if numeric_val and numeric_val.lower() != "n/a" else None)
                 except (ValueError, TypeError):
+                    print(f"[DB ERROR] Falha ao converter valor '{val}' para inteiro na coluna '{col_name}'. Definindo como None.")
                     values_to_insert.append(None)
             else:
-                values_to_insert.append(val if val != "N/A" and val is not None else None)
+                values_to_insert.append(val if val is not None and str(val).lower() != "n/a" else None)
 
         insert_query = sql.SQL(
             "INSERT INTO {} ({}) VALUES ({})"
@@ -177,7 +191,7 @@ def create_leilo_table(conn):
                 veiculo_possui_chave VARCHAR(100),
                 veiculo_tipo_retomada VARCHAR(100),
                 veiculo_tipo VARCHAR(100),
-                veiculo_valor_fipe NUMERIC(15, 2),
+                veiculo_valor_fipe NUMERIC,
                 veiculo_fabricante VARCHAR(255),
                 veiculo_imagem TEXT,
                 veiculo_km VARCHAR(100),
@@ -185,9 +199,8 @@ def create_leilo_table(conn):
                 veiculo_modelo VARCHAR(255),
                 veiculo_situacao VARCHAR(255),
                 veiculo_titulo VARCHAR(500),
-                veiculo_patio_uf VARCHAR(10),
-                veiculo_valor_lance_atual NUMERIC(15, 2),
-                veiculo_patio_uf_localizacao VARCHAR(255),
+                veiculo_patio_uf VARCHAR(30),
+                veiculo_valor_lance_atual NUMERIC,
                 data_extracao TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """).format(sql.Identifier(table_name))
@@ -206,12 +219,16 @@ def create_leilo_table(conn):
             cursor.close()
 
 def insert_data_leilo(conn, data_row_dict):
+    """
+    Insere um dicionário de dados na tabela 'leilo'.
+    O dicionário 'data_row_dict' DEVE conter chaves com os nomes das colunas 'PARA' do mapeamento.
+    """
     cursor = None
     try:
         cursor = conn.cursor()
         table_name = "leilo"
         
-        # Lista de colunas esperadas para inserção (todas em minúsculas com underscores)
+        # Lista de colunas esperadas para inserção na tabela 'leilo' (NOMES 'PARA')
         columns_to_insert = [
             "veiculo_titulo",
             "veiculo_link_lote",
@@ -229,11 +246,11 @@ def insert_data_leilo(conn, data_row_dict):
             "veiculo_tipo",
             "veiculo_valor_fipe",
             "veiculo_fabricante",
-            "veiculo_modelo",
-            "veiculo_patio_uf_localizacao" # Adicionado o campo que estava faltando
+            "veiculo_modelo"
         ]
         
-        # Lógica de verificação e log de colunas (similar à função parque_leiloes_oficial)
+        print(f"[DB DEBUG] Colunas para inserção na tabela '{table_name}': {columns_to_insert}")
+
         data_keys = set(data_row_dict.keys())
         expected_columns_set = set(columns_to_insert)
 
@@ -241,7 +258,7 @@ def insert_data_leilo(conn, data_row_dict):
         extra_in_data = data_keys - expected_columns_set
 
         if missing_in_data:
-            print(f"[DB WARN] Colunas esperadas no banco de dados (tabela '{table_name}'), mas ausentes nos dados recebidos: {missing_in_data}")
+            print(f"[DB WARN] Colunas esperadas na tabela '{table_name}', mas ausentes nos dados recebidos: {missing_in_data}")
             for col in missing_in_data:
                 data_row_dict[col] = None 
         
@@ -254,12 +271,36 @@ def insert_data_leilo(conn, data_row_dict):
 
             if col_name in ["veiculo_valor_lance_atual", "veiculo_valor_fipe"]:
                 try:
-                    cleaned_val = str(val).replace('R$', '').replace('.', '').replace(',', '.').strip()
-                    values_to_insert.append(float(cleaned_val) if cleaned_val and cleaned_val != "N/A" else None)
+                    if isinstance(val, (int, float)):
+                        values_to_insert.append(float(val))
+                    else:
+                        s_val = str(val).replace('R$', '').strip()
+                        s_val = s_val.replace('.', '')
+                        s_val = s_val.replace(',', '.')
+                        values_to_insert.append(float(s_val) if s_val and s_val.lower() != "n/a" else None)
                 except (ValueError, TypeError):
+                    print(f"[DB ERROR] Falha ao converter valor '{val}' para numérico na coluna '{col_name}'. Definindo como None.")
+                    values_to_insert.append(None)
+            elif col_name in ["veiculo_ano_fabricacao", "veiculo_ano_modelo", "veiculo_total_lances", "veiculo_numero_visualizacoes"]:
+                try:
+                    numeric_val = re.sub(r'\D', '', str(val)) 
+                    values_to_insert.append(int(numeric_val) if numeric_val and numeric_val.lower() != "n/a" else None)
+                except (ValueError, TypeError):
+                    print(f"[DB ERROR] Falha ao converter valor '{val}' para inteiro na coluna '{col_name}'. Definindo como None.")
+                    values_to_insert.append(None)
+            elif col_name == "veiculo_km":
+                try:
+                    if isinstance(val, (int, float)):
+                        values_to_insert.append(str(val))
+                    else:
+                        cleaned_km = str(val).lower().replace('km', '').strip()
+                        numeric_km = re.sub(r'[^\d,.]', '', cleaned_km).replace('.', '').replace(',', '.')
+                        values_to_insert.append(numeric_km if numeric_km and numeric_km.lower() != "n/a" else None)
+                except (ValueError, TypeError):
+                    print(f"[DB ERROR] Falha ao processar valor '{val}' para 'veiculo_km'. Definindo como None.")
                     values_to_insert.append(None)
             else:
-                values_to_insert.append(val if val != "N/A" and val is not None else None)
+                values_to_insert.append(val if val is not None and str(val).lower() != "n/a" else None)
 
         insert_query = sql.SQL(
             "INSERT INTO {} ({}) VALUES ({})"
@@ -280,11 +321,13 @@ def insert_data_leilo(conn, data_row_dict):
         if cursor:
             cursor.close()
 
-# --- Funções para a Tabela 'loop' ---
+
+### Funções para a Tabela 'loop' (Corrigidas e Consistentes)
+
 def create_loop_table(conn):
     """
     Cria a tabela 'loop' se ela não existir,
-    com as colunas consistentes com o mapeamento 'DE'->'PARA' fornecido.
+    com as colunas consistentes com o mapeamento fornecido, usando 'veiculo_condicao_motor'.
     """
     cursor = None
     try:
@@ -294,24 +337,24 @@ def create_loop_table(conn):
             CREATE TABLE IF NOT EXISTS {} (
                 id SERIAL PRIMARY KEY,
                 veiculo_link_lote TEXT UNIQUE NOT NULL,
-                veiculo_titulo VARCHAR(500),         -- Mapeado de 'Nome do Veículo (Header)'
-                veiculo_fabricante VARCHAR(255),     -- Mapeado de 'Marca'
+                veiculo_titulo VARCHAR(500),
+                veiculo_fabricante VARCHAR(255),
                 veiculo_modelo VARCHAR(255),
                 veiculo_versao VARCHAR(255),
                 veiculo_ano_fabricacao INTEGER,
                 veiculo_ano_modelo INTEGER,
-                veiculo_valor_fipe NUMERIC(15, 2),   -- Mapeado de 'Fipe'
+                veiculo_valor_fipe NUMERIC(15, 2),
                 veiculo_blindado VARCHAR(50),
                 veiculo_chave VARCHAR(50),
-                veiculo_funcionando VARCHAR(50),
-                veiculo_tipo_combustivel VARCHAR(100), -- Mapeado de 'Combustível'
-                veiculo_km VARCHAR(100),             -- Mantido como VARCHAR para Km (pode vir com "km" no texto)
-                veiculo_total_lances INTEGER,        -- Mapeado de 'Número de Lances'
+                veiculo_condicao_motor VARCHAR(50), -- Nomenclatura mantida: veiculo_condicao_motor
+                veiculo_tipo_combustivel VARCHAR(100),
+                veiculo_km VARCHAR(100),
+                veiculo_total_lances INTEGER,
                 veiculo_numero_visualizacoes INTEGER,
                 veiculo_data_leilao VARCHAR(100),
                 veiculo_horario_leilao VARCHAR(50),
-                veiculo_lance_atual NUMERIC(15, 2),  -- Mapeado de 'Lance Atual'
-                veiculo_situacao_lote VARCHAR(100),  -- Mapeado de 'Situação do Lote'
+                veiculo_lance_atual NUMERIC(15, 2),
+                veiculo_situacao_lote VARCHAR(100),
                 data_extracao TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """).format(sql.Identifier(table_name))
@@ -332,14 +375,14 @@ def create_loop_table(conn):
 def insert_data_loop(conn, data_row_dict):
     """
     Insere um dicionário de dados na tabela 'loop'.
-    O dicionário 'data_row_dict' DEVE conter chaves com os nomes das colunas 'PARA' do mapeamento.
+    O dicionário 'data_row_dict' DEVE conter chaves com os nomes das colunas 'PARA' do mapeamento,
+    usando 'veiculo_condicao_motor'.
     """
     cursor = None
     try:
         cursor = conn.cursor()
         table_name = "loop"
         
-        # Lista de colunas esperadas para inserção na tabela 'loop' (NOMES 'PARA')
         columns_to_insert = [
             "veiculo_link_lote",
             "veiculo_titulo",
@@ -351,7 +394,7 @@ def insert_data_loop(conn, data_row_dict):
             "veiculo_valor_fipe",
             "veiculo_blindado",
             "veiculo_chave",
-            "veiculo_funcionando",
+            "veiculo_condicao_motor", # Nomenclatura mantida: veiculo_condicao_motor
             "veiculo_tipo_combustivel",
             "veiculo_km",
             "veiculo_total_lances",
@@ -380,24 +423,40 @@ def insert_data_loop(conn, data_row_dict):
 
         values_to_insert = []
         for col_name in columns_to_insert:
-            val = data_row_dict.get(col_name) # Pega o valor diretamente da chave 'PARA'
+            val = data_row_dict.get(col_name)
 
-            # Tratamento específico para campos numéricos e inteiros
             if col_name in ["veiculo_valor_fipe", "veiculo_lance_atual"]:
                 try:
-                    cleaned_val = str(val).replace('R$', '').replace('.', '').replace(',', '.').strip()
-                    values_to_insert.append(float(cleaned_val) if cleaned_val and cleaned_val != "N/A" else None)
+                    if isinstance(val, (int, float)):
+                        values_to_insert.append(float(val))
+                    else:
+                        s_val = str(val).replace('R$', '').strip()
+                        s_val = s_val.replace('.', '')
+                        s_val = s_val.replace(',', '.')
+                        values_to_insert.append(float(s_val) if s_val and s_val.lower() != "n/a" else None)
                 except (ValueError, TypeError):
+                    print(f"[DB ERROR] Falha ao converter valor '{val}' para numérico na coluna '{col_name}'. Definindo como None.")
                     values_to_insert.append(None)
             elif col_name in ["veiculo_ano_fabricacao", "veiculo_ano_modelo", "veiculo_total_lances", "veiculo_numero_visualizacoes"]:
                 try:
-                    # Remove qualquer texto não-numérico antes da conversão para int
                     numeric_val = re.sub(r'\D', '', str(val)) 
-                    values_to_insert.append(int(numeric_val) if numeric_val and numeric_val != "N/A" else None)
+                    values_to_insert.append(int(numeric_val) if numeric_val and numeric_val.lower() != "n/a" else None)
                 except (ValueError, TypeError):
+                    print(f"[DB ERROR] Falha ao converter valor '{val}' para inteiro na coluna '{col_name}'. Definindo como None.")
+                    values_to_insert.append(None)
+            elif col_name == "veiculo_km":
+                try:
+                    if isinstance(val, (int, float)):
+                        values_to_insert.append(str(val))
+                    else:
+                        cleaned_km = str(val).lower().replace('km', '').strip()
+                        numeric_km = re.sub(r'[^\d,.]', '', cleaned_km).replace('.', '').replace(',', '.')
+                        values_to_insert.append(numeric_km if numeric_km and numeric_km.lower() != "n/a" else None)
+                except (ValueError, TypeError):
+                    print(f"[DB ERROR] Falha ao processar valor '{val}' para 'veiculo_km'. Definindo como None.")
                     values_to_insert.append(None)
             else:
-                values_to_insert.append(val if val != "N/A" and val is not None else None)
+                values_to_insert.append(val if val is not None and str(val).lower() != "n/a" else None)
 
         insert_query = sql.SQL(
             "INSERT INTO {} ({}) VALUES ({}) ON CONFLICT (veiculo_link_lote) DO UPDATE SET "
@@ -410,7 +469,7 @@ def insert_data_loop(conn, data_row_dict):
             "veiculo_valor_fipe = EXCLUDED.veiculo_valor_fipe, "
             "veiculo_blindado = EXCLUDED.veiculo_blindado, "
             "veiculo_chave = EXCLUDED.veiculo_chave, "
-            "veiculo_funcionando = EXCLUDED.veiculo_funcionando, "
+            "veiculo_condicao_motor = EXCLUDED.veiculo_condicao_motor, " # Nomenclatura mantida: veiculo_condicao_motor
             "veiculo_tipo_combustivel = EXCLUDED.veiculo_tipo_combustivel, "
             "veiculo_km = EXCLUDED.veiculo_km, "
             "veiculo_total_lances = EXCLUDED.veiculo_total_lances, "
@@ -448,7 +507,7 @@ def test_insert_mock_data():
         "veiculo_patio_uf": "SP",
         "veiculo_ano_fabricacao": "2020", 
         "veiculo_km": "50000", 
-        "veiculo_valor_lance_atual": 15000.00, 
+        "veiculo_valor_lance_atual": "15.000,00",
         "veiculo_situacao": "ABERTO",
         "veiculo_data_leilao": "10/07/2025",
         "veiculo_tipo_combustivel": "GASOLINA",
@@ -456,13 +515,11 @@ def test_insert_mock_data():
         "veiculo_possui_chave": "SIM",
         "veiculo_tipo_retomada": "FINANCEIRA",
         "veiculo_tipo": "PASSEIO",
-        "veiculo_valor_fipe": 20000.00, 
+        "veiculo_valor_fipe": "20.000,00",
         "veiculo_fabricante": "FIAT",
         "veiculo_modelo": "ARGO",
-        "veiculo_patio_uf_localizacao": "São Paulo - SP"
     }
 
-    # Dados mock para a nova tabela 'loop' - AGORA COM CHAVES 'PARA'
     mock_data_loop = {
         'veiculo_link_lote': 'https://loopbrasil.net/lote/JEEP-RENEGADE-20-20-/99999/',
         'veiculo_titulo': 'JEEP RENEGADE 20/20',
@@ -471,20 +528,19 @@ def test_insert_mock_data():
         'veiculo_versao': 'SPORT',
         'veiculo_ano_fabricacao': '2020',
         'veiculo_ano_modelo': '2020',
-        'veiculo_valor_fipe': 'R$ 75.000,00', # Mantido como string para testar o tratamento de valor
+        'veiculo_valor_fipe': 'R$ 75.000,00',
         'veiculo_blindado': 'NÃO',
         'veiculo_chave': 'SIM',
-        'veiculo_funcionando': 'SIM',
+        'veiculo_condicao_motor': 'SIM', # Nomenclatura mantida: veiculo_condicao_motor
         'veiculo_tipo_combustivel': 'FLEX',
-        'veiculo_km': '35.000', # Mantido como string para testar o tratamento de valor
+        'veiculo_km': '35.000 km',
         'veiculo_total_lances': '50',
         'veiculo_numero_visualizacoes': '500',
         'veiculo_data_leilao': '10/07/2025',
         'veiculo_horario_leilao': '09:30h',
-        'veiculo_lance_atual': 'R$ 30.000,00', # Mantido como string para testar o tratamento de valor
+        'veiculo_lance_atual': 'R$ 30.000,00',
         'veiculo_situacao_lote': 'Aberto para Lances'
     }
-
 
     conn = None
     try:
@@ -492,13 +548,13 @@ def test_insert_mock_data():
         if conn:
             print("\n[TESTE] Conexão com o banco de dados estabelecida para teste.")
             
-            # Teste para a tabela 'leilo' (mantido do seu código)
+            # Teste para a tabela 'leilo'
             create_leilo_table(conn) 
             print("[TESTE] Tentando inserir registro mock na tabela 'leilo'...")
             insert_data_leilo(conn, mock_data_leilo) 
             print("[TESTE] Inserção de registro mock na tabela 'leilo' concluída (verifique logs acima para sucesso/erro).")
 
-            # NOVO: Teste para a tabela 'loop'
+            # Teste para a tabela 'loop'
             create_loop_table(conn)
             print("\n[TESTE] Tentando inserir registro mock na tabela 'loop'...")
             insert_data_loop(conn, mock_data_loop)
@@ -513,6 +569,5 @@ def test_insert_mock_data():
             conn.close()
             print("[TESTE] Conexão com o banco de dados fechada após teste.")
 
-# Exemplo de como você pode chamar a função de teste (descomente para usar)
 if __name__ == "__main__":
     test_insert_mock_data()

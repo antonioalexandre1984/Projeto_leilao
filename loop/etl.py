@@ -4,12 +4,13 @@ import re
 from datetime import datetime, timedelta
 
 # Define o caminho do diretório onde o scraper gera os arquivos CSV.
-CSV_DIRECTORY = r"C:\Users\anton\Desktop\parque_leiloes_scraper\app\loop\loopetl"
+# O caminho está em ambiente Docker, então /app/loop/webscraping é o correto.
+CSV_DIRECTORY = r"C:\Users\anton\Desktop\parque_leiloes_scraper\app\loop\webscraping"
 
 def find_latest_csv(directory):
     latest_csv = None
     latest_timestamp = None
-    csv_pattern = re.compile(r"lotes_loopbrasil_(\d{8}_\d{6})\.csv")
+    csv_pattern = re.compile(r"loopbrasil_(\d{8}_\d{6})\.csv")
 
     if not os.path.exists(directory):
         print(f"[ERRO] O diretório '{directory}' para os arquivos CSV não foi encontrado.")
@@ -73,104 +74,84 @@ def process_and_display_data():
         print("\n[DEBUG] Primeiras 5 linhas do DataFrame (antes do processamento):")
         print(df.head().to_string())
 
-        # --- Passo 1: Extrair e popular colunas da 'Descricao Detalhada' primeiro ---
-        if 'Descricao Detalhada' in df.columns:
-            # Garante que a coluna 'Descricao Detalhada' é string e preenche NaNs com string vazia
-            df['Descricao Detalhada'] = df['Descricao Detalhada'].fillna('').astype(str)
+        # --- Etapa 1: Renomear colunas para os nomes padronizados ---
+        # Este é o mapeamento dos nomes de coluna que vêm do CSV
+        # para os novos nomes desejados.
+        # Ajuste este dicionário se os nomes das colunas no CSV mudarem.
+        column_rename_map = {
+            'URL do Lote': 'URL do Lote', # Mantido igual, mas para clareza
+            'Nome do Veículo (Header)': 'Nome do Veículo',
+            'Marca': 'Marca',
+            'Modelo': 'Modelo',
+            'Versão': 'Versão',
+            'Ano de Fabricação': 'Ano de Fabricação',
+            'Ano Modelo': 'Ano Modelo',
+            'Fipe': 'Tabela FIPE', # Renomeando de Fipe para Tabela FIPE
+            'Blindado': 'Blindado',
+            'Chave': 'Chaves', # Renomeando de Chave para Chaves
+            'Funcionando': 'Funcionando',
+            'Combustível': 'Combustível',
+            'Km': 'KM', # Renomeando de Km para KM
+            'Número de Lances': 'Numero de Lances',
+            'Número de Visualizações': 'Numero de Visualizacoes',
+            'Data do Leilão': 'Data do Leilao',
+            'Horário do Leilão': 'Horario do Leilao',
+            'Lance Atual': 'Lance Atual',
+            'Situação do Lote': 'Situacao do Lote'
+        }
 
-            # Define os padrões regex para cada campo a ser extraído da 'Descricao Detalhada'
-            patterns_desc = {
-                'Marca Veiculo': r"Marca:\s*(.+?)\n",
-                'Modelo Veiculo': r"Modelo:\s*(.+?)\n",
-                'Versao Veiculo': r"Versão:\s*(.+?)\n",
-                'KM Veiculo': r"KM:\s*(.+?)\n",
-                'Ano Fabricacao Veiculo': r"Ano de Fabricação:\s*(.+?)\n",
-                'Ano Modelo Veiculo': r"Ano Modelo:\s*(.+?)\n",
-                'Chaves Veiculo': r"Chaves:\s*(.+?)\n",
-                'Condicao Motor Veiculo': r"Condição do Motor:\s*(.+?)(?:\s*\n|$)".replace(' ', r'[\s\xA0]'),
-                'Tabela FIPE Veiculo': r"Tabela FIPE R\$?\s*(.+?)\n",
-                'Final da Placa Veiculo': r"Final da Placa:\s*(.+?)\n",
-                'Combustivel Veiculo': r"Combustível:\s*(.+?)\n",
-                'Procedencia Veiculo': r"Procedência:\s*(.+)",
-            }
+        # Renomeia as colunas que existem no DataFrame
+        df = df.rename(columns=column_rename_map)
+        print("[INFO] Colunas renomeadas para os nomes padronizados.")
+        print("[DEBUG] Colunas após renomeação:")
+        print(df.columns.tolist())
 
-            for col_name, pattern in patterns_desc.items():
-                # Aplica a regex na coluna já tratada como string
-                extracted_data = df['Descricao Detalhada'].str.extract(pattern, flags=re.IGNORECASE|re.MULTILINE)
-                # Preenche a nova coluna com os valores extraídos, usando '' para NaNs, e remove espaços extras
-                df[col_name] = extracted_data.fillna('').iloc[:, 0].str.strip()
-            
-            print("[INFO] Detalhes do veículo extraídos da 'Descricao Detalhada'.")
-            df = df.drop(columns=['Descricao Detalhada'], errors='ignore')
-            print("[INFO] Coluna original 'Descricao Detalhada' removida.")
-        else:
-            print("[AVISO] Coluna 'Descricao Detalhada' não encontrada. Detalhes do veículo podem estar incompletos.")
-            for col_name in ['Marca Veiculo', 'Modelo Veiculo', 'Versao Veiculo', 'KM Veiculo',
-                             'Ano Fabricacao Veiculo', 'Ano Modelo Veiculo', 'Chaves Veiculo',
-                             'Condicao Motor Veiculo', 'Tabela FIPE Veiculo', 'Final da Placa Veiculo',
-                             'Combustivel Veiculo', 'Procedencia Veiculo']:
-                if col_name not in df.columns:
-                    df[col_name] = 'N/A'
 
-        # --- Passo 2: Priorizar 'Ano Fabricacao Veiculo' e 'Ano Modelo Veiculo' do 'Título' ---
-        if 'Título' in df.columns:
-            # Garante que a coluna 'Título' é string e preenche NaNs com string vazia
-            df['Título'] = df['Título'].fillna('').astype(str)
+        # --- Etapa 2: Definir a ordem final e quais colunas manter ---
+        final_columns_order = [
+            'URL do Lote',
+            'Nome do Veículo',
+            'Marca',
+            'Modelo',
+            'Versão',
+            'Ano de Fabricação',
+            'Ano Modelo',
+            'Tabela FIPE',
+            'Blindado',
+            'Chaves',
+            'Funcionando',
+            'Combustível',
+            'KM',
+            'Numero de Lances',
+            'Numero de Visualizacoes',
+            'Data do Leilao',
+            'Horario do Leilao',
+            'Lance Atual',
+            'Situacao do Lote'
+        ]
 
-            year_pattern_title = r"^(.*?)\s*(\d{2})\/(\d{2})(?:$|\s.*)"
+        # Filtra as colunas do DataFrame para conter apenas as da lista `final_columns_order`
+        # e as coloca na ordem especificada.
+        # Quaisquer colunas no DataFrame que não estejam em `final_columns_order` serão removidas.
+        # Quaisquer colunas em `final_columns_order` que não estejam no DataFrame serão adicionadas com NaN.
+        # Para evitar adicionar com NaN e apenas remover as não existentes, faremos um loop.
+        
+        # Primeiro, identifique as colunas presentes no DF que estão na lista final
+        columns_to_keep = [col for col in final_columns_order if col in df.columns]
 
-            extracted_years_df = df['Título'].str.extract(year_pattern_title, flags=re.IGNORECASE)
+        # Em seguida, crie o DataFrame final contendo apenas essas colunas e na ordem desejada
+        df = df[columns_to_keep]
 
-            if not extracted_years_df.empty and len(extracted_years_df.columns) >= 3:
-                df['Título Limpo'] = extracted_years_df[0].str.strip()
-                
-                temp_fabrication_year = extracted_years_df[1].apply(
-                    lambda x: f"20{x}" if pd.notna(x) and len(str(x)) == 2 else x
-                ).fillna('')
+        print(f"[INFO] DataFrame ajustado para conter apenas as {len(columns_to_keep)} colunas desejadas e na ordem especificada.")
+        print("[DEBUG] Colunas finais no DataFrame:")
+        print(df.columns.tolist())
 
-                temp_model_year = extracted_years_df[2].apply(
-                    lambda x: f"20{x}" if pd.notna(x) and len(str(x)) == 2 else x
-                ).fillna('')
 
-                df['Ano Fabricacao Veiculo'] = temp_fabrication_year.mask(
-                    temp_fabrication_year == '', df['Ano Fabricacao Veiculo']
-                ).replace('', 'N/A')
+        # --- Não há necessidade de extrair de "Descricao Detalhada" ou "Título"
+        #     porque o scraper já está extraindo isso diretamente e o CSV já vem com as colunas certas.
+        #     Seus dados já devem vir com 'Marca', 'Modelo', 'Versão', etc., diretamente do scraper.
+        #     Removi o código original que fazia essa extração no ETL.
 
-                df['Ano Modelo Veiculo'] = temp_model_year.mask(
-                    temp_model_year == '', df['Ano Modelo Veiculo']
-                ).replace('', 'N/A')
-
-                print("[INFO] 'Ano Fabricacao Veiculo' e 'Ano Modelo Veiculo' atualizados a partir da coluna 'Título'.")
-            else:
-                print("[INFO] Formato 'XX/XX' não encontrado na coluna 'Título' para extração de anos. Mantendo valores de 'Descricao Detalhada' ou 'N/A'.")
-            
-            df['Título'] = df['Título Limpo'].fillna(df['Título'])
-            df = df.drop(columns=['Título Limpo'], errors='ignore')
-        else:
-            print("[AVISO] Coluna 'Título' não encontrada. Anos do veículo podem estar incompletos.")
-
-        # --- Duplicar e formatar a coluna 'Data Término' para 'data leilão' ---
-        if 'Data Término' in df.columns:
-            # Garante que a coluna 'Data Término' é string e preenche NaNs com string vazia
-            df['Data Término'] = df['Data Término'].fillna('').astype(str)
-            df['data leilão'] = df['Data Término'].str.strip()
-            print("[INFO] Coluna 'Data Término' utilizada para 'data leilão'.")
-        elif 'Situação' in df.columns:
-            # Garante que a coluna 'Situação' é string e preenche NaNs com string vazia
-            df['Situação'] = df['Situação'].fillna('').astype(str)
-            df['data leilão'] = df['Situação']
-            df['data leilão'] = df['data leilão'].str.replace("Leilão ao vivo em: ", "", regex=False).str.strip()
-            try:
-                df['data leilão'] = df['data leilão'].apply(lambda x: pd.to_datetime(
-                    f"{datetime.now().year}-{datetime.now().month}-{datetime.now().day} {x.replace('h', ':').replace('m', ':').replace('s', '')}",
-                    format="%Y-%m-%d %H:%M:%S"
-                ).strftime("%d/%m/%Y") if pd.notna(x) and x.strip() else '')
-                print("[INFO] Coluna 'Situação' duplicada e formatada para 'data leilão' (dd/mm/aaaa) como fallback.")
-            except Exception as e:
-                print(f"[ERRO] Ocorreu um erro ao formatar a coluna 'data leilão' do fallback: {e}.")
-        else:
-            print("[AVISO] Nenhuma coluna 'Data Término' ou 'Situação' encontrada. 'data leilão' não pôde ser criada.")
-            df['data leilão'] = 'N/A' # Garante que a coluna exista
 
         pd.set_option('display.max_columns', None)
         pd.set_option('display.width', 1000)
@@ -183,7 +164,11 @@ def process_and_display_data():
         timestamp_excel = datetime.now().strftime("%Y%m%d_%H%M%S")
         excel_file_name = f"dados_loop_processado_{timestamp_excel}.xlsx"
 
-        OUTPUT_DIR = r"C:\Users\anton\Desktop\parque_leiloes_scraper\app\loop\etl_tratado"
+        # Caminho de saída para o Excel, agora dentro do volume mapeado do Docker
+        # Mude para um caminho dentro do contêiner que está mapeado para o seu host,
+        # como /app/output ou o diretório raiz do projeto se ele estiver montado.
+        # Se você quer que ele salve no mesmo local do CSV, use CSV_DIRECTORY
+        OUTPUT_DIR = r"C:\Users\anton\Desktop\parque_leiloes_scraper\app\loop\etl_tratado" # Assumindo que você tem um volume mapeado para isso
         os.makedirs(OUTPUT_DIR, exist_ok=True)
         excel_file_path = os.path.join(OUTPUT_DIR, excel_file_name)
 

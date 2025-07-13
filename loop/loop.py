@@ -12,21 +12,17 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
 # Importar as funções de banco de dados
+db_modules_loaded = False
 try:
-    from db_utils.db_operations import connect_db, create_loop_table, insert_data_loop
+    from db_utils.db_operations import (connect_db, create_loop_table, insert_data_loop)
     print("[INFO] Módulos de banco de dados importados com sucesso.")
+    db_modules_loaded = True
 except ImportError as e:
-    print(f"[ERRO] Falha ao importar db_manager: {e}. Certifique-se de que db_manager.py está acessível.")
-    # import sys
-    # sys.exit(1)
+    print(f"[ERRO] Falha ao importar módulos de banco de dados: {e}.")
+    print("[ERRO] Certifique-se de que a biblioteca 'psycopg2-binary' está instalada (pip install psycopg2-binary) e que 'db_operations.py' está acessível no caminho correto.")
 
 
 def safe_get_element_text(element, css_selector, wait_time=0):
-    """
-    Tenta obter o texto de um elemento usando um seletor CSS.
-    Retorna "N/A" se o elemento não for encontrado ou o texto for vazio.
-    Inclui tratamento para StaleElementReferenceException e tempo de espera opcional.
-    """
     try:
         if isinstance(element, webdriver.remote.webdriver.WebDriver):
             found_element = WebDriverWait(element, wait_time).until(
@@ -44,11 +40,6 @@ def safe_get_element_text(element, css_selector, wait_time=0):
         return "N/A"
 
 def safe_get_element_attribute(element, css_selector, attribute, wait_time=0):
-    """
-    Tenta obter um atributo de um elemento usando um seletor CSS.
-    Retorna "N/A" se o elemento não for encontrado ou o atributo não existir.
-    Inclui tratamento para StaleElementReferenceException e tempo de espera opcional.
-    """
     try:
         if isinstance(element, webdriver.remote.webdriver.WebDriver):
             found_element = WebDriverWait(element, wait_time).until(
@@ -64,13 +55,17 @@ def safe_get_element_attribute(element, css_selector, attribute, wait_time=0):
     except Exception as e:
         return "N/A"
 
+def format_currency_brl(value, include_symbol=False):
+    if isinstance(value, (int, float)):
+        formatted_value = f"{value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        if include_symbol:
+            return f"R$ {formatted_value}"
+        else:
+            return formatted_value
+    return "N/A"
+
 def extract_data_from_lot_detail_page(driver_instance, lot_url):
-    """
-    Navega para a URL de detalhes do lote e extrai as informações,
-    usando as chaves "DE" do mapeamento fornecido.
-    """
     print(f"    Acessando página de detalhes do lote: {lot_url}")
-    # Usando 'URL do Lote' como a chave DE do mapeamento
     data = {'URL do Lote': lot_url} 
 
     try:
@@ -80,7 +75,6 @@ def extract_data_from_lot_detail_page(driver_instance, lot_url):
         )
         print(f"    Página de detalhes '{driver_instance.title}' carregada.")
 
-        # --- Extração de dados do bloco "div.editor.taj" usando RegEx ---
         details_block_text = safe_get_element_text(driver_instance, "div.editor.taj")
         
         if details_block_text != "N/A":
@@ -96,17 +90,27 @@ def extract_data_from_lot_detail_page(driver_instance, lot_url):
                     return value.strip()
                 return "N/A"
 
-            # Ajustando as chaves de acordo com o mapeamento DE
             data['Marca'] = get_regex_value(details_block_text, "Marca")
             data['Modelo'] = get_regex_value(details_block_text, "Modelo")
             data['Versão'] = get_regex_value(details_block_text, "Versão")
             data['Ano de Fabricação'] = get_regex_value(details_block_text, "Ano de Fabricação")
             data['Ano Modelo'] = get_regex_value(details_block_text, "Ano Modelo")
-            data['Fipe'] = get_regex_value(details_block_text, "Fipe")
+            
+            fipe_text = get_regex_value(details_block_text, "Fipe")
+            if fipe_text != "N/A":
+                cleaned_fipe = fipe_text.replace("R$", "").replace(".", "").replace(",", ".").strip()
+                try:
+                    fipe_value = float(cleaned_fipe)
+                    data['Fipe'] = format_currency_brl(fipe_value, include_symbol=True)
+                except ValueError:
+                    data['Fipe'] = "N/A"
+            else:
+                data['Fipe'] = "N/A"
+
             data['Blindado'] = get_regex_value(details_block_text, "Blindado")
             data['Chave'] = get_regex_value(details_block_text, "Chave")
             data['Funcionando'] = get_regex_value(details_block_text, "Funcionando")
-            data['Combustível'] = get_regex_value(details_block_text, "Combustível") # Mantém com acento para extração
+            data['Combustível'] = get_regex_value(details_block_text, "Combustível")
             data['Km'] = get_regex_value(details_block_text, "Km")
         else:
             print("    [WARN] Bloco de detalhes 'div.editor.taj' não encontrado na página de detalhes.")
@@ -122,12 +126,21 @@ def extract_data_from_lot_detail_page(driver_instance, lot_url):
             data['Combustível'] = "N/A"
             data['Km'] = "N/A"
 
-        # --- Extração de dados adicionais (ajustando chaves para o mapeamento DE) ---
-        data['Nome do Veículo (Header)'] = safe_get_element_text(driver_instance, "h1.LL_carname") 
-        data['Data do Leilão'] = safe_get_element_text(driver_instance, "p.datalote + p.cor_969696") 
-        data['Horário do Leilão'] = safe_get_element_text(driver_instance, "div.datalote2 p.cor_969696")
+        data['Nome do Veículo (Header)'] = safe_get_element_text(driver_instance, "h1.fwb.cor_221E1F span.LL_nome")
+        
+        data['Data do Leilão'] = safe_get_element_text(driver_instance, "li.LL_data_fim data.dib") 
+        data['Horário do Leilão'] = safe_get_element_text(driver_instance, "li.LL_data_fim hora.dib")
 
-        data['Lance Atual'] = safe_get_element_text(driver_instance, "p.LL_lance_atual")
+        lance_atual_text = safe_get_element_text(driver_instance, "div.LL_lance_atual b")
+        if lance_atual_text != "N/A":
+            cleaned_lance_atual = lance_atual_text.replace("R$", "").replace(".", "").replace(",", ".").strip()
+            try:
+                lance_atual_value = float(cleaned_lance_atual)
+                data['Lance Atual'] = format_currency_brl(lance_atual_value, include_symbol=True) 
+            except ValueError:
+                data['Lance Atual'] = "N/A"
+        else:
+            data['Lance Atual'] = "N/A"
         
         lances_views_text = safe_get_element_text(driver_instance, "p.contagem") 
         lances_match = re.search(r'(\d+)\s*Lances', lances_views_text)
@@ -148,41 +161,22 @@ def extract_data_from_lot_detail_page(driver_instance, lot_url):
         return data
 
 def save_to_csv(data_list):
-    """
-    Salva uma lista de dicionários em um arquivo CSV no caminho especificado.
-    Usa as chaves "DE" do mapeamento.
-    """
     if not data_list:
         print("[INFO] Nenhuns dados para salvar no CSV.")
         return
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_directory = r"C:\Users\anton\Desktop\parque_leiloes_scraper\app\loop\webscraping"
+    output_directory = "/app/webscraping" 
     os.makedirs(output_directory, exist_ok=True) 
     
-    output_filename = os.path.join(output_directory, f"lotes_loopbrasil_{timestamp}.csv")
+    output_filename = os.path.join(output_directory, f"loopbrasil_{timestamp}.csv")
 
-    # Os fieldnames devem corresponder às chaves retornadas por extract_data_from_lot_detail_page
     fieldnames = [
-        'URL do Lote',
-        'Nome do Veículo (Header)', 
-        'Marca',
-        'Modelo',
-        'Versão',
-        'Ano de Fabricação',
-        'Ano Modelo',
-        'Fipe',
-        'Blindado',
-        'Chave',
-        'Funcionando',
-        'Combustível', # Mantém com acento para CSV
-        'Km',
-        'Número de Lances',
-        'Número de Visualizações',
-        'Data do Leilão',
-        'Horário do Leilão',
-        'Lance Atual',
-        'Situação do Lote'
+        'URL do Lote', 'Nome do Veículo (Header)', 'Marca', 'Modelo', 'Versão',
+        'Ano de Fabricação', 'Ano Modelo', 'Fipe', 'Blindado', 'Chave',
+        'Funcionando', 'Combustível', 'Km', 'Número de Lances',
+        'Número de Visualizações', 'Data do Leilão', 'Horário do Leilão',
+        'Lance Atual', 'Situação do Lote'
     ]
 
     try:
@@ -197,45 +191,41 @@ def save_to_csv(data_list):
         print(f"[ERRO] Ocorreu um erro inesperado ao salvar o CSV: {e}")
 
 def save_to_database(data_list, db_connection):
-    """
-    Salva uma lista de dicionários no banco de dados 'loop',
-    mapeando as chaves do scraper ('DE') para as chaves do banco de dados ('PARA').
-    """
     if not data_list:
         print("[INFO] Nenhuns dados para salvar no banco de dados.")
         return
 
-    # Mapeamento EXATO das chaves "DE" para as chaves "PARA" do banco de dados
     db_mapping = {
-        'URL do Lote': 'veiculo_link_lote',
-        'Nome do Veículo (Header)': 'veiculo_titulo',
-        'Marca': 'veiculo_fabricante', # Mapeado para fabricante
-        'Modelo': 'veiculo_modelo',
-        'Versão': 'veiculo_versao',
-        'Ano de Fabricação': 'veiculo_ano_fabricacao',
-        'Ano Modelo': 'veiculo_ano_modelo',
-        'Fipe': 'veiculo_valor_fipe', # Mapeado para valor_fipe
-        'Blindado': 'veiculo_blindado',
-        'Chave': 'veiculo_chave',
-        'Funcionando': 'veiculo_funcionando',
-        'Combustível': 'veiculo_tipo_combustivel', # Mapeado para tipo_combustivel
-        'Km': 'veiculo_km',
-        'Número de Lances': 'veiculo_total_lances', # Mapeado para total_lances
+        'URL do Lote': 'veiculo_link_lote', 'Nome do Veículo (Header)': 'veiculo_titulo',
+        'Marca': 'veiculo_fabricante', 'Modelo': 'veiculo_modelo', 'Versão': 'veiculo_versao',
+        'Ano de Fabricação': 'veiculo_ano_fabricacao', 'Ano Modelo': 'veiculo_ano_modelo',
+        'Fipe': 'veiculo_valor_fipe', 'Blindado': 'veiculo_blindado', 'Chave': 'veiculo_chave',
+        'Funcionando': 'veiculo_condicao_motor', 'Combustível': 'veiculo_tipo_combustivel',
+        'Km': 'veiculo_km', 'Número de Lances': 'veiculo_total_lances',
         'Número de Visualizações': 'veiculo_numero_visualizacoes',
-        'Data do Leilão': 'veiculo_data_leilao',
-        'Horário do Leilão': 'veiculo_horario_leilao',
-        'Lance Atual': 'veiculo_lance_atual', # Mapeado para lance_atual
-        'Situação do Lote': 'veiculo_situacao_lote'
+        'Data do Leilão': 'veiculo_data_leilao', 'Horário do Leilão': 'veiculo_horario_leilao',
+        'Lance Atual': 'veiculo_lance_atual', 'Situação do Lote': 'veiculo_situacao_lote'
     }
 
     print("[INFO] Iniciando salvamento dos dados no banco de dados...")
     for data_row_scraper in data_list:
         data_row_db = {}
         for scraper_key, db_key in db_mapping.items():
-            # Pega o valor da chave original do scraper e atribui à chave mapeada para o DB
-            data_row_db[db_key] = data_row_scraper.get(scraper_key)
+            if db_key in ['veiculo_valor_fipe', 'veiculo_lance_atual']:
+                value = data_row_scraper.get(scraper_key)
+                if isinstance(value, str) and value.startswith("R$"):
+                    cleaned_value = value.replace("R$", "").replace(".", "").replace(",", ".").strip()
+                    try:
+                        data_row_db[db_key] = float(cleaned_value)
+                    except ValueError:
+                        data_row_db[db_key] = None
+                elif isinstance(value, (float, int)):
+                    data_row_db[db_key] = value
+                else:
+                    data_row_db[db_key] = None
+            else:
+                data_row_db[db_key] = data_row_scraper.get(scraper_key)
         
-        # Insere a linha processada no banco de dados
         insert_data_loop(db_connection, data_row_db)
     print("[SUCESSO] Todos os dados foram processados para inserção no banco de dados.")
 
@@ -243,7 +233,7 @@ def save_to_database(data_list, db_connection):
 # --- Configuração e Inicialização do Selenium ---
 print("[INFO] Iniciando a configuração do Selenium...")
 options = Options()
-# options.add_argument("--headless")    # Rodar em modo headless para mais velocidade e menor uso de recursos
+# options.add_argument("--headless")
 options.add_argument("--disable-gpu")
 options.add_argument("--no-sandbox")
 options.add_argument("--disable-dev-shm-usage")
@@ -272,20 +262,9 @@ for attempt in range(MAX_TRIES):
 else:
     raise Exception("❌ Não foi possível conectar ao Selenium após várias tentativas.")
 
-# --- Conexão com o Banco de Dados ---
 db_conn = None
-try:
-    db_conn = connect_db()
-    if db_conn:
-        print("[INFO] Conexão com o banco de dados estabelecida. Verificando/Criando tabela 'loop'...")
-        create_loop_table(db_conn)
-    else:
-        print("[WARN] Não foi possível conectar ao banco de dados. Os dados serão salvos APENAS em CSV.")
-except Exception as e:
-    print(f"[ERRO] Erro ao conectar ou criar tabela no banco de dados: {e}. Os dados serão salvos APENAS em CSV.")
-    db_conn = None
-
 all_lotes_data = []
+
 base_url = "https://loopbrasil.net"
 initial_list_page_url = f"{base_url}/lotes/?&cate[]=3"
 
@@ -299,7 +278,6 @@ try:
         driver.get(current_page_url)
         print(f"[INFO] Página de listagem carregada: {driver.title}")
 
-        # --- Lógica para fechar pop-up de cookies ou outros banners ---
         print("[INFO] Tentando fechar pop-ups/aceitar cookies (se houver)...")
         try:
             cookie_banner_container = WebDriverWait(driver, 10).until(
@@ -319,14 +297,19 @@ try:
         except Exception as e:
             print(f"[WARN] Erro inesperado ao tentar lidar com pop-ups: {e}. Prosseguindo.")
 
-        # --- Encontra e processa todos os lotes na página principal ---
         print(f"\n--- Localizando e extraindo URLs dos lotes na página de listagem (Página {page_counter}) ---")
         
-        WebDriverWait(driver, 20).until(
-            EC.visibility_of_all_elements_located((By.CSS_SELECTOR, "section[id^='lote'] > a.card"))
-        )
-        
-        lot_card_elements = driver.find_elements(By.CSS_SELECTOR, "section[id^='lote'] > a.card")
+        try:
+            WebDriverWait(driver, 20).until(
+                EC.visibility_of_all_elements_located((By.CSS_SELECTOR, "section[id^='lote'] > a.card"))
+            )
+            lot_card_elements = driver.find_elements(By.CSS_SELECTOR, "section[id^='lote'] > a.card")
+        except TimeoutException:
+            print("[WARN] Timeout ao tentar localizar os elementos dos lotes. Nenhuns lotes podem ser extraídos nesta página.")
+            lot_card_elements = []
+        except Exception as e:
+            print(f"[ERROR] Erro ao buscar lot_card_elements: {e}")
+            lot_card_elements = []
 
         if lot_card_elements:
             print(f"[INFO] Encontrados {len(lot_card_elements)} lotes na página de listagem.")
@@ -360,11 +343,9 @@ try:
                         print(f"    {key}: {value}")
                     
                     time.sleep(1)
-
         else:
             print("[INFO] Nenhum lote encontrado nesta página para análise.")
 
-        # --- Lógica de Paginação ---
         print("\n--- Verificando Paginação ---")
         next_page_link = None
         try:
@@ -394,21 +375,56 @@ try:
         if current_page_url:
             time.sleep(2)
 
-    # --- Salva os dados após processar todas as páginas ---
-    save_to_csv(all_lotes_data)
-    if db_conn:
-        save_to_database(all_lotes_data, db_conn)
+    # --- SALVAMENTO FINAL AQUI, APÓS A EXTRAÇÃO COMPLETA OU QUANDO A PAGINAÇÃO TERMINA ---
+    print("\n[INFO] Extração de dados concluída. Iniciando salvamento final.")
+
+    # Salva para CSV
+    save_to_csv(all_lotes_data) 
+
+    # Conecta e salva no Banco de Dados
+    if all_lotes_data and db_modules_loaded:
+        db_connection_retries = 5 
+        db_retry_delay = 5 
+
+        for i in range(db_connection_retries):
+            print(f"[INFO] Tentando conectar ao banco de dados para salvar resultados ({i+1}/{db_connection_retries})...")
+            try:
+                db_conn = connect_db()
+                if db_conn:
+                    print("[INFO] Conexão com o banco de dados estabelecida para salvar dados.")
+                    break
+            except Exception as e:
+                print(f"[WARN] Falha na conexão com o banco de dados: {e}. Tentando novamente em {db_retry_delay}s...")
+            time.sleep(db_retry_delay)
+        else:
+            print("[ERRO] Não foi possível estabelecer conexão com o banco de dados após várias tentativas. Os dados não serão salvos no DB.")
+            db_conn = None
+
+        if db_conn:
+            print("[INFO] Criando ou verificando a tabela 'loop'...")
+            create_loop_table(db_conn)
+            print("[INFO] Iniciando inserção de dados na tabela 'loop'...")
+            save_to_database(all_lotes_data, db_conn)
+            print(f"[INFO] {len(all_lotes_data)} registros processados para inserção na tabela 'loop'.")
+            
+            try:
+                db_conn.close()
+                print("[INFO] Conexão com o banco de dados fechada.")
+            except Exception as e:
+                print(f"[ERRO] Erro ao fechar conexão com o banco de dados: {e}")
+    elif not db_modules_loaded:
+        print("[INFO] Módulos de banco de dados não foram carregados, pulando salvamento no DB.")
+    else:
+        print("[INFO] Nenhuns dados raspados para salvar no banco de dados.")
+
 
 except TimeoutException:
-    print("[WARN] Timeout ao carregar a página inicial ou elementos de lote.")
+    print("[WARN] Timeout ao carregar a página inicial ou elementos de lote. O scraper pode ter parado prematuramente.")
 except Exception as e:
-    print(f"❌ ERRO geral no processo de raspagem: {e}")
+    print(f"❌ ERRO geral no processo de raspagem (antes do salvamento final): {e}")
 
 finally:
     if driver:
         print("[INFO] Fechando o navegador Selenium.")
         driver.quit()
-    if db_conn:
-        print("[INFO] Fechando a conexão com o banco de dados.")
-        db_conn.close()
     print("[INFO] Processo concluído.")
